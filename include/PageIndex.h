@@ -349,6 +349,87 @@ const char MAIN_page[] PROGMEM = R"=====(
         <br>
         
         <div class="div_Form">
+          <h3>Countdown Timer</h3>
+          <table style="width:100%">
+            <tr>
+              <td style="width:25%"><label>Active : </label></td>
+              <td style="width:75%">
+                <input type="checkbox" id="countdown_Active" style="transform: scale(1.2);">
+              </td>
+            </tr>
+            <tr>
+              <td><label>Title : </label></td>
+              <td>
+                <div class="div_Form_Input">
+                  <div class="div_Input_Text">
+                    <input type="text" id="countdown_Title" maxlength="50" placeholder="Event title (e.g., NEW YEAR)">
+                  </div>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td><label>Target Date : </label></td>
+              <td>
+                <div style="display: flex; gap: 5px;">
+                  <input type="number" id="countdown_Day" min="1" max="31" style="width:20%;" placeholder="Day">
+                  <input type="number" id="countdown_Month" min="1" max="12" style="width:20%;" placeholder="Month">
+                  <input type="number" id="countdown_Year" min="2024" max="2099" style="width:25%;" placeholder="Year">
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td><label>Target Time : </label></td>
+              <td>
+                <div style="display: flex; gap: 5px;">
+                  <input type="number" id="countdown_Hour" min="0" max="23" style="width:20%;" placeholder="Hour">
+                  <input type="number" id="countdown_Minute" min="0" max="59" style="width:20%;" placeholder="Min">
+                  <input type="number" id="countdown_Second" min="0" max="59" style="width:20%;" placeholder="Sec">
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td colspan="2"><label>Countdown Color (RGB) : </label></td>
+            </tr>
+            <tr>
+              <td style="width:10%"><label>R : </label></td>
+              <td style="width:90%">
+                <div class="div_Form_Input">
+                  <div class="div_Input_Text">
+                    <input type="number" id="Color_Countdown_R" min="0" max="255" value="255">
+                  </div>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td><label>G : </label></td>
+              <td>
+                <div class="div_Form_Input">
+                  <div class="div_Input_Text">
+                    <input type="number" id="Color_Countdown_G" min="0" max="255" value="165">
+                  </div>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td><label>B : </label></td>
+              <td>
+                <div class="div_Form_Input">
+                  <div class="div_Input_Text">
+                    <input type="number" id="Color_Countdown_B" min="0" max="255" value="0">
+                  </div>
+                </div>
+              </td>
+            </tr>
+          </table>
+          <div style="margin-top: 10px;">
+            <button class="myButton" onclick="setCountdown()">Set Countdown</button>
+            <button class="myButton" onclick="setColorCountdown()">Set Countdown Color</button>
+          </div>
+        </div>
+        
+        <br>
+        
+        <div class="div_Form">
           <h3>System</h3>
           <button class="myButton myButtonX" onclick="resetSystem()">Reset System</button>
         </div>
@@ -494,6 +575,52 @@ const char MAIN_page[] PROGMEM = R"=====(
           }
           var msg = "key=" + key + "&sta=setScrollingText";
           msg += "&input_Scrolling_Text=" + encodeURIComponent(document.getElementById("input_Scrolling_Text").value);
+          sendCommandToESP32("set", msg);
+        }
+        
+        function setCountdown() {
+          var key = document.getElementById("key").value;
+          if (key == "") {
+            alert("Please enter the key!");
+            return;
+          }
+          
+          // Validation des champs
+          var day = document.getElementById("countdown_Day").value;
+          var month = document.getElementById("countdown_Month").value;
+          var year = document.getElementById("countdown_Year").value;
+          var hour = document.getElementById("countdown_Hour").value;
+          var minute = document.getElementById("countdown_Minute").value;
+          var second = document.getElementById("countdown_Second").value;
+          var title = document.getElementById("countdown_Title").value;
+          
+          if (!day || !month || !year || !hour || minute === "" || second === "" || !title) {
+            alert("Please fill all countdown fields!");
+            return;
+          }
+          
+          var msg = "key=" + key + "&sta=setCountdown";
+          msg += "&countdown_Active=" + document.getElementById("countdown_Active").checked;
+          msg += "&countdown_Day=" + day;
+          msg += "&countdown_Month=" + month;
+          msg += "&countdown_Year=" + year;
+          msg += "&countdown_Hour=" + hour;
+          msg += "&countdown_Minute=" + minute;
+          msg += "&countdown_Second=" + second;
+          msg += "&countdown_Title=" + encodeURIComponent(title);
+          sendCommandToESP32("set", msg);
+        }
+        
+        function setColorCountdown() {
+          var key = document.getElementById("key").value;
+          if (key == "") {
+            alert("Please enter the key!");
+            return;
+          }
+          var msg = "key=" + key + "&sta=setColorCountdown";
+          msg += "&Color_Countdown_R=" + document.getElementById("Color_Countdown_R").value;
+          msg += "&Color_Countdown_G=" + document.getElementById("Color_Countdown_G").value;
+          msg += "&Color_Countdown_B=" + document.getElementById("Color_Countdown_B").value;
           sendCommandToESP32("set", msg);
         }
         

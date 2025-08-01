@@ -72,6 +72,20 @@
             "problemMatcher": "$gcc"
         },
         {
+            "label": "PlatformIO: Test Countdown",
+            "type": "shell",
+            "command": "pio",
+            "args": ["run", "-e", "countdown_test", "--target", "upload"],
+            "group": "test",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            },
+            "problemMatcher": "$gcc"
+        },
+        {
             "label": "PlatformIO: Test Cascade (2 panels)",
             "type": "shell",
             "command": "pio",

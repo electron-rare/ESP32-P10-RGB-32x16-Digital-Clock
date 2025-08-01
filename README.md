@@ -6,6 +6,44 @@ Horloge numérique utilisant un panneau P10 RGB 32x16 avec ESP32, module RTC DS3
 
 Version adaptée pour PlatformIO à partir du code Arduino IDE original.
 
+## ✨ Fonctionnalités
+
+### 🕒 Horloge Principale
+- **Affichage de l'heure** avec deux points clignotants
+- **Module RTC DS3231** pour une précision élevée
+- **Centrage automatique** adapté au nombre de panneaux
+
+### 📝 Texte Défilant
+- **Messages personnalisables** (150 caractères max)
+- **Vitesse ajustable** (10-100)
+- **Affichage de la date** automatique
+- **Rotation automatique** entre date, texte et countdown
+
+### ⏱️ Countdown (Nouveau!)
+- **Compte à rebours** vers une date/heure cible
+- **Format adaptatif** : jours, heures, minutes, secondes
+- **Titre personnalisable** pour l'événement
+- **Couleur dédiée** avec indication d'expiration
+- **Activation/désactivation** via interface web
+
+### 🎨 Personnalisation
+- **2 modes d'affichage** : couleurs fixes ou changeantes
+- **Couleurs RGB** personnalisables pour chaque élément
+- **Luminosité ajustable** (0-255)
+- **Interface web complète** pour la configuration
+
+### 🔗 Cascade de Panneaux
+- **Support multi-panneaux** (1x1 à 8x1, 2x2)
+- **Affichage élargi** pour textes longs
+- **Configuration automatique** de la luminosité
+- **Tests dédiés** pour chaque configuration
+
+### 🌐 Connectivité
+- **WiFi ou Point d'Accès** automatique
+- **Interface web responsive** pour configuration
+- **Sauvegarde persistante** en mémoire flash
+- **Sécurisé** avec clé d'accès
+
 ## Matériel Requis
 
 - **ESP32 DEVKIT V1**
@@ -102,6 +140,8 @@ Ou utilisez les boutons PlatformIO dans VS Code.
 ├── examples/
 │   ├── rtc_test.cpp        # Test du module RTC
 │   ├── p10_test.cpp        # Test du panneau P10
+│   ├── countdown_test.cpp  # Test du countdown
+│   ├── cascade_test.cpp    # Test des panneaux multiples
 │   └── nvs_erase.cpp       # Effacement mémoire NVS
 └── README.md               # Ce fichier
 ```
@@ -132,6 +172,26 @@ Ou utilisez les boutons PlatformIO dans VS Code.
    - Couleurs (en mode 1)
    - Texte défilant
    - Vitesse de défilement
+   - **Countdown** : événement, date cible, couleur
+
+### ⏱️ Configuration du Countdown
+
+Le countdown permet d'afficher un compte à rebours vers un événement :
+
+1. **Activez le countdown** : Cochez la case "Active"
+2. **Nommez l'événement** : Exemple "NOUVEL AN", "ANNIVERSAIRE"
+3. **Définissez la date cible** : Jour, Mois, Année
+4. **Définissez l'heure cible** : Heure, Minute, Seconde (24h)
+5. **Choisissez la couleur** : RGB personnalisable
+6. **Sauvegardez** avec "Set Countdown"
+
+**Formats d'affichage :**
+- Avec jours : `NOUVEL AN: 15d 08h 30m 45s`
+- Sans jours : `NOUVEL AN: 08h 30m 45s`
+- Dernière heure : `NOUVEL AN: 30m 45s`
+- Expiré : `NOUVEL AN - EXPIRED!` (en rouge)
+
+Voir le [Guide Countdown Complet](COUNTDOWN_GUIDE.md) pour plus de détails.
 
 ### Configuration de l'heure RTC
 
@@ -141,24 +201,61 @@ SET,2024,8,1,14,30,0
 ```
 Format : `SET,année,mois,jour,heure,minute,seconde`
 
-## Programmes d'exemple
+## Programmes d'exemple et Tests
+
+### 🧪 Tests avec PlatformIO
+
+Le projet inclut plusieurs environnements de test préconfigurés :
+
+```bash
+# Test du module RTC DS3231
+pio run -e rtc_test --target upload
+
+# Test du panneau P10 (couleurs, texte)
+pio run -e p10_test --target upload
+
+# Test du countdown (5 min automatique)
+pio run -e countdown_test --target upload
+
+# Test cascade (panneaux multiples)
+pio run -e test_cascade --target upload
+
+# Effacement mémoire NVS
+pio run -e nvs_erase --target upload
+```
+
+### 📱 Tâches VS Code
+
+Si vous utilisez VS Code avec PlatformIO, les tâches suivantes sont disponibles :
+- **PlatformIO: Test RTC Module**
+- **PlatformIO: Test P10 Matrix**  
+- **PlatformIO: Test Countdown**
+- **PlatformIO: Test Cascade (2 panels)**
+- **PlatformIO: Erase NVS Memory**
 
 ### Test du module RTC
 ```bash
-# Modifiez src/main.cpp pour inclure examples/rtc_test.cpp
-# Ou créez un nouveau projet avec ce fichier
+# Affiche la date/heure actuelle
+# Utile pour vérifier la connexion RTC
 ```
 
 ### Test du panneau P10
 ```bash
-# Modifiez src/main.cpp pour inclure examples/p10_test.cpp
-# Utile pour vérifier les connexions
+# Test complet des couleurs et de l'affichage
+# Utile pour vérifier les connexions HUB75
+```
+
+### Test du countdown
+```bash
+# Configure automatiquement un countdown de 5 minutes
+# Affiche les différents formats d'affichage
+# Test d'expiration automatique
 ```
 
 ### Effacement mémoire NVS
 ```bash
-# Utilisez examples/nvs_erase.cpp si vous voulez
-# réinitialiser toutes les préférences sauvegardées
+# Réinitialise toutes les préférences sauvegardées
+# Utile pour un "reset factory" complet
 ```
 
 ## Modes d'affichage

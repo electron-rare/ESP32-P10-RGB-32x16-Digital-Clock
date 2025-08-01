@@ -1,6 +1,14 @@
-# Guide de Démarrage Rapide - ESP32 P10 Digital Clock
+# Guide de Démarrage Rapide - ESP32 P10 Digital Cl2. **Test du RTC** :
+   ```bash
+   pio run -e rtc_test --target upload
+   ```
 
-## 🚀 Démarrage en 5 minutes
+3. **Test du countdown** :
+   ```bash
+   pio run -e countdown_test --target upload
+   ```
+
+### Étape 5 : Upload principal# 🚀 Démarrage en 5 minutes
 
 ### Étape 1 : Préparation
 1. **Installez PlatformIO** dans VS Code
@@ -119,6 +127,7 @@ pio run -t clean
 - **Luminosité** : 0-255
 - **Texte défilant** : Message personnalisé
 - **Vitesse** : Réglage du défilement
+- **⏱️ Countdown** : Compte à rebours vers un événement
 
 ## 💡 Configuration Avancée
 
@@ -144,6 +153,7 @@ Modifiez dans `src/main.cpp` :
 - [ ] Heure s'affiche correctement
 - [ ] Date défile en bas
 - [ ] Texte personnalisé fonctionne
+- [ ] Countdown configuré et actif
 - [ ] Changement de couleurs (mode 2)
 - [ ] Réglage luminosité
 - [ ] Sauvegarde des paramètres
@@ -152,8 +162,13 @@ Modifiez dans `src/main.cpp` :
 
 Une fois tout testé, votre horloge affichera :
 - **Heure** en haut (HH:MM avec : clignotant)
-- **Date et texte** défilant en bas
+- **Date, texte et countdown** défilant en bas
 - **Couleurs** selon le mode choisi
 - **Configuration** via navigateur web
+
+**⏱️ Exemple de countdown :**
+```
+NOUVEL AN: 25d 08h 30m 45s
+```
 
 Clé d'accès web : **p10rgbesp32ws**

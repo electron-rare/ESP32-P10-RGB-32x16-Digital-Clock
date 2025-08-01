@@ -122,6 +122,19 @@ int Color_Date_R = 0, Color_Date_G = 255, Color_Date_B = 0;
 int Color_Text_R = 0, Color_Text_G = 0, Color_Text_B = 255;
 char input_Scrolling_Text[151] = "ESP32 P10 RGB Digital Clock with PlatformIO";
 
+// Variables pour le countdown
+bool countdown_Active = false;
+int countdown_Year = 2025;
+byte countdown_Month = 12;
+byte countdown_Day = 31;
+byte countdown_Hour = 23;
+byte countdown_Minute = 59;
+byte countdown_Second = 59;
+char countdown_Title[51] = "NEW YEAR";
+char countdown_Text[101];
+bool countdown_Expired = false;
+int Color_Countdown_R = 255, Color_Countdown_G = 165, Color_Countdown_B = 0; // Orange par défaut
+
 // Configuration WiFi - Modifiez selon vos besoins
 const char* ssid = "YOUR_WIFI_SSID";
 const char* password = "YOUR_WIFI_PASSWORD";
@@ -224,6 +237,42 @@ void set_ESP32_Access_Point() {
   delay(1000);
 }
 
+// Fonction de calcul et formatage du countdown
+void updateCountdown() {
+  if (!countdown_Active) return;
+  
+  DateTime now = rtc.now();
+  DateTime target(countdown_Year, countdown_Month, countdown_Day, countdown_Hour, countdown_Minute, countdown_Second);
+  
+  // Vérifier si le countdown est expiré
+  if (now >= target) {
+    countdown_Expired = true;
+    strcpy(countdown_Text, countdown_Title);
+    strcat(countdown_Text, " - EXPIRED!");
+    return;
+  }
+  
+  countdown_Expired = false;
+  
+  // Calculer la différence
+  TimeSpan diff = target - now;
+  long totalSeconds = diff.totalseconds();
+  
+  int days = totalSeconds / 86400;
+  int hours = (totalSeconds % 86400) / 3600;
+  int minutes = (totalSeconds % 3600) / 60;
+  int seconds = totalSeconds % 60;
+  
+  // Formater le texte selon la durée restante
+  if (days > 0) {
+    sprintf(countdown_Text, "%s: %dd %02dh %02dm %02ds", countdown_Title, days, hours, minutes, seconds);
+  } else if (hours > 0) {
+    sprintf(countdown_Text, "%s: %02dh %02dm %02ds", countdown_Title, hours, minutes, seconds);
+  } else {
+    sprintf(countdown_Text, "%s: %02dm %02ds", countdown_Title, minutes, seconds);
+  }
+}
+
 // Fonction pour obtenir la largeur du texte en pixels
 uint16_t getTextWidth(const char* text) {
   int16_t x1, y1;
@@ -314,8 +363,23 @@ void loadSettings() {
   Color_Text_G = preferences.getInt("CT_G", 0);
   Color_Text_B = preferences.getInt("CT_B", 255);
   
+  // Paramètres du countdown
+  countdown_Active = preferences.getBool("cd_Active", false);
+  countdown_Year = preferences.getInt("cd_Year", 2025);
+  countdown_Month = preferences.getInt("cd_Month", 12);
+  countdown_Day = preferences.getInt("cd_Day", 31);
+  countdown_Hour = preferences.getInt("cd_Hour", 23);
+  countdown_Minute = preferences.getInt("cd_Minute", 59);
+  countdown_Second = preferences.getInt("cd_Second", 59);
+  Color_Countdown_R = preferences.getInt("CD_R", 255);
+  Color_Countdown_G = preferences.getInt("CD_G", 165);
+  Color_Countdown_B = preferences.getInt("CD_B", 0);
+  
   String savedText = preferences.getString("scrollText", "ESP32 P10 RGB Digital Clock with PlatformIO");
   strcpy(input_Scrolling_Text, savedText.c_str());
+  
+  String savedCountdownTitle = preferences.getString("cd_Title", "NEW YEAR");
+  strcpy(countdown_Title, savedCountdownTitle.c_str());
   
   preferences.end();
   
@@ -525,6 +589,69 @@ void handleSettings() {
     scrolling_text_Display_Order = 0;
   }
 
+  // Configurer le countdown
+  else if (incoming_Settings == "setCountdown") {
+    countdown_Active = server.arg("countdown_Active") == "true";
+    countdown_Year = server.arg("countdown_Year").toInt();
+    countdown_Month = server.arg("countdown_Month").toInt();
+    countdown_Day = server.arg("countdown_Day").toInt();
+    countdown_Hour = server.arg("countdown_Hour").toInt();
+    countdown_Minute = server.arg("countdown_Minute").toInt();
+    countdown_Second = server.arg("countdown_Second").toInt();
+    
+    String countdownTitle = server.arg("countdown_Title");
+    if (countdownTitle.length() > 50) countdownTitle = countdownTitle.substring(0, 50);
+    strcpy(countdown_Title, countdownTitle.c_str());
+    
+    Serial.println("Set Countdown:");
+    Serial.printf("Active: %s\n", countdown_Active ? "true" : "false");
+    Serial.printf("Target: %02d-%02d-%d %02d:%02d:%02d\n", 
+                  countdown_Day, countdown_Month, countdown_Year, 
+                  countdown_Hour, countdown_Minute, countdown_Second);
+    Serial.printf("Title: %s\n", countdown_Title);
+
+    preferences.begin("mySettings", false);
+    preferences.putBool("cd_Active", countdown_Active);
+    preferences.putInt("cd_Year", countdown_Year);
+    preferences.putInt("cd_Month", countdown_Month);
+    preferences.putInt("cd_Day", countdown_Day);
+    preferences.putInt("cd_Hour", countdown_Hour);
+    preferences.putInt("cd_Minute", countdown_Minute);
+    preferences.putInt("cd_Second", countdown_Second);
+    preferences.putString("cd_Title", countdownTitle);
+    preferences.end();
+    
+    countdown_Expired = false;
+    reset_Scrolling_Text = true;
+    scrolling_text_Display_Order = 0;
+  }
+
+  // Définir la couleur du countdown
+  else if (incoming_Settings == "setColorCountdown") {
+    if (input_Display_Mode == 2) {
+      server.send(200, "text/plain", "+ERR_DM");
+      Serial.println("-------------");
+      return;
+    }
+    
+    Color_Countdown_R = server.arg("Color_Countdown_R").toInt();
+    Color_Countdown_G = server.arg("Color_Countdown_G").toInt();
+    Color_Countdown_B = server.arg("Color_Countdown_B").toInt();
+    
+    Serial.printf("Set Countdown Color (RGB) : %d,%d,%d\n", Color_Countdown_R, Color_Countdown_G, Color_Countdown_B);
+
+    display_update_enable(false);
+    delay(100);
+    
+    preferences.begin("mySettings", false);
+    preferences.putInt("CD_R", Color_Countdown_R);
+    preferences.putInt("CD_G", Color_Countdown_G);
+    preferences.putInt("CD_B", Color_Countdown_B);
+    preferences.end();
+    
+    display_update_enable(true);
+  }
+
   // Reset du système
   else if (incoming_Settings == "resetSystem") {
     Serial.println("System Reset requested");
@@ -713,6 +840,11 @@ void loop() {
     prevMill_Update_Time = currentMillis_Update_Time;
     get_Time();
     blink_Colon = !blink_Colon;
+    
+    // Mise à jour du countdown si actif
+    if (countdown_Active) {
+      updateCountdown();
+    }
   }
 
   // Affichage de l'horloge
@@ -767,11 +899,12 @@ void loop() {
   if (start_Scroll_Text == false) {
     scrolling_text_Display_Order++;
     
-    if (input_Display_Mode == 1) {
-      if (scrolling_text_Display_Order > 2) scrolling_text_Display_Order = 1;
-    } else {
-      if (scrolling_text_Display_Order > 3) scrolling_text_Display_Order = 1;
+    int maxOrder = countdown_Active ? 3 : 2; // 3 éléments si countdown actif, sinon 2
+    if (input_Display_Mode == 2) {
+      maxOrder++; // Un ordre supplémentaire pour le changement de couleur
     }
+    
+    if (scrolling_text_Display_Order > maxOrder) scrolling_text_Display_Order = 1;
 
     // Affichage de la date
     if (scrolling_text_Display_Order == 1) {
@@ -804,8 +937,28 @@ void loop() {
       strcpy(text_Scrolling_Text, input_Scrolling_Text);
     }
 
+    // Affichage du countdown (si actif)
+    if (scrolling_text_Display_Order == 3 && countdown_Active) {
+      display.setTextSize(1);
+      scrolling_Y_Pos = 8;
+      
+      if (input_Display_Mode == 1) {
+        if (countdown_Expired) {
+          scrolling_Text_Color = myRED; // Rouge si expiré
+        } else {
+          scrolling_Text_Color = display.color565(Color_Countdown_R, Color_Countdown_G, Color_Countdown_B);
+        }
+      } else {
+        int next_cnt_Color = (cnt_Color + 3) % myCOLOR_ARRAY_Length;
+        scrolling_Text_Color = myCOLOR_ARRAY[next_cnt_Color];
+      }
+      
+      strcpy(text_Scrolling_Text, countdown_Text);
+    }
+
     // Changement de couleur (mode 2 seulement)
-    if (scrolling_text_Display_Order == 3 && input_Display_Mode == 2) {
+    int colorChangeOrder = countdown_Active ? 4 : 3;
+    if (scrolling_text_Display_Order == colorChangeOrder && input_Display_Mode == 2) {
       cnt_Color = (cnt_Color + 1) % myCOLOR_ARRAY_Length;
       strcpy(text_Scrolling_Text, "");
     }
