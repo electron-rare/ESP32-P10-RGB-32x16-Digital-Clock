@@ -1,0 +1,21 @@
+{
+    "files.associations": {
+        "*.ino": "cpp",
+        "platformio.ini": "ini"
+    },
+    "C_Cpp.default.configurationProvider": "ms-vscode.vscode-json",
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true,
+    "files.autoSave": "afterDelay",
+    "files.autoSaveDelay": 1000,
+    "terminal.integrated.defaultProfile.osx": "zsh",
+    "platformio-ide.forceUploadAndMonitor": false,
+    "platformio-ide.autoPreloadEnvTasks": true,
+    "explorer.fileNesting.enabled": true,
+    "explorer.fileNesting.patterns": {
+        "platformio.ini": ".vscode/*, lib/*, test/*, .pio/*, .gitignore",
+        "README.md": "*.md"
+    },
+    "stm32-for-vscode.openOCDPath": false,
+    "stm32-for-vscode.armToolchainPath": false
+}

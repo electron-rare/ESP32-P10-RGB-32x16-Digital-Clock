@@ -1,0 +1,527 @@
+const char MAIN_page[] PROGMEM = R"=====(
+  <!DOCTYPE html>
+  <html>
+    <title>Digital Clcok & Scrolling Text with ESP32 and P10 RGB 32x16</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      html {font-family: Helvetica, sans-serif;}
+      h1 {font-size: 1.1rem; color:#1976D2;}
+  
+      label {font-size: 14px;}
+  
+      .div_Form {
+        margin: auto;
+        width: 90%;
+        border:1px solid #D8D8D8;
+        border-radius: 10px;
+        background-color: #f2f2f2;
+        padding: 9px 9px;
+      }
+  
+      .myButton {
+        display: inline-block;
+        padding: 3px 25px;
+        font-size: 13px;
+        cursor: pointer;
+        text-align: center;
+        text-decoration: none;
+        outline: none;
+        color: #fff;
+        background-color: #1976D2;
+        border: none;
+        border-radius: 8px;
+        box-shadow: 0 2px #999;
+      }
+      .myButton:hover {background-color: #104d89}
+      .myButton:active {background-color: #104d89; box-shadow: 0 1px #666; transform: translateY(2px);}
+      .myButton:disabled {background-color: #666; box-shadow: 0 1px #666; transform: translateY(2px);}
+      
+      .myButtonX {background-color: #ff0000}
+      .myButtonX:hover {background-color: #7a0101}
+      
+      .div_Form_Input {display: table; margin: 0px; padding: 0px; box-sizing: border-box;}
+      .div_Input_Text {display: table-cell; width: 100%;}
+      .div_Input_Text > input {width:99.5%; margin-left: 0px; padding-left: 2px; box-sizing: border-box;}
+      
+      table, th, td {
+        border: 0px solid black;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
+      tr {height: 30px;}
+      
+      textarea {
+        resize: none;
+        height:50px;
+      }
+    </style>
+    
+    <body>
+      <div style="text-align: center;">
+        <h1>Digital Clcok & Scrolling Text with ESP32 and P10 RGB 32x16</h1>
+      </div>
+  
+      <div class="div_Form">
+        <form>
+          <!-- Input Key -->
+          <label for="keys_TXT">Key :</label>
+          <input type="password" style="width: 170px;" id="input_Keys_TXT" name="input_Keys_TXT" maxlength="20" placeholder="Enter key here..." />
+          <!--  -->
+          
+          <hr style="border: 1px solid #e6e6e6;">
+          
+          <!-- Displays and applies time and date. -->
+          <label id="show_Date_Time">Please wait...</label>
+          <br>
+          <button type="button" class="myButton" style="font-size: 12px; padding: 3px 10px; margin-top: 5px;" id="btn_Apply_TimeDate" onclick="btn_Apply_TimeDate_Click()">Apply Time and Date</button>
+          <!--  -->
+          
+          <hr style="border: 1px solid #e6e6e6;">
+          
+          
+          <table style="width:280px; margin-left: -1px;">
+            <!-- Set display mode. -->
+            <tr>
+              <td>Display Mode</td>
+              <td>:</td>
+              <td>
+                <select name="input_Display_Mode" id="input_Display_Mode">
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                </select>
+              </td>
+              <td align="right">
+                <button type="button" class="myButton" style="font-size: 12px; padding: 3px 10px;" id="btn_Apply_Display_Mode" onclick="btn_Apply_Display_Mode_Click()">Apply</button>
+              </td>
+            </tr>
+            <!--  -->
+            
+            <!-- Set Brightness. -->
+            <tr>
+              <td>Brightness</td>
+              <td>:</td>
+              <td>
+                <input type="text" value="50" id="input_Brightness" maxlength="3" size="3" oninput="this.value = this.value.replace(/[^0-9.]/g, '').replace(/(\..*?)\..*/g, '$1');" /> (0 - 255)
+              </td>
+              <td align="right">
+                <button type="button" class="myButton" style="font-size: 12px; padding: 3px 10px;" id="btn_Apply_Input_Brightness" onclick="btn_Apply_Input_Brightness_Click()">Apply</button>
+              </td>
+            </tr>
+            <!--  -->
+            
+            <!-- Set Clock Color. -->
+            <tr>
+              <td>Clock Color</td>
+              <td>:</td>
+              <td>
+                <input type="color" id="input_Color_Clock" name="input_Color_Clock" value="#0000ff">
+              </td>
+              <td align="right">
+                <button type="button" class="myButton" style="font-size: 12px; padding: 3px 10px;" id="btn_Apply_Input_Color_Clock" onclick="btn_Apply_Input_Color_Clock_Click()">Apply</button>
+              </td>
+            </tr>
+            <!--  -->
+            
+            <!-- Set Date Color. -->
+            <tr>
+              <td>Date Color</td>
+              <td>:</td>
+              <td>
+                <input type="color" id="input_Color_Date" name="input_Color_Date" value="#0000ff">
+              </td>
+              <td align="right">
+                <button type="button" class="myButton" style="font-size: 12px; padding: 3px 10px;" id="btn_Apply_Input_Color_Date" onclick="btn_Apply_Input_Color_Date_Click()">Apply</button>
+              </td>
+            </tr>
+            <!--  -->
+          </table>
+          
+          <hr style="border: 1px solid #e6e6e6;">
+          
+          <label for="Keys_TXT">Scrolling Text :</label>
+          <br>         
+          <table style="width:100%; margin-left: -1px;">
+            <tr>
+              <!-- Set Scrolling Text. -->
+              <td>
+                <textarea id="input_Scrolling_Text" name="input_Scrolling_Text" style="width: 100%; margin: 0px; padding: 0px;" maxlength="150" placeholder="Enter text here...(Max 150 characters)"></textarea>
+              </td>
+              <td style="width: 5px;"></td>
+              <td style="width: 30px; vertical-align: top;" align="center">
+                <button type="button" class="myButton myButtonX" style="font-size: 12px; padding: 3px 10px;" id="btn_Clear_Input_Scrolling_Text" onclick="btn_Clear_Input_Scrolling_Text_Click()">X</button>
+              </td>
+              <td style="width: 50px; vertical-align: top;" align="right">
+                <button type="button" class="myButton" style="font-size: 12px; padding: 3px 10px;" id="btn_Apply_Input_Scrolling_Text" onclick="btn_Apply_Input_Scrolling_Text_Click()">Apply</button>
+              </td>
+            </tr>
+            <!--  -->
+          </table>
+          
+          <br>
+          
+          <table style="width:280px; margin-left: -1px;">
+            <!-- Set Text Color. -->
+            <tr>
+              <td>Text Color</td>
+              <td>:</td>
+              <td>
+                <input type="color" id="input_Text_Color" name="input_Text_Color" value="#0000ff">
+              </td>
+              <td align="right">
+                <button type="button" class="myButton" style="font-size: 12px; padding: 3px 10px;" id="btn_Apply_Input_Text_Color" onclick="btn_Apply_Input_Text_Color_Click()">Apply</button>
+              </td>
+            </tr>
+            <!--  -->
+            
+            <!-- Set Scrolling Speed. -->
+            <tr>
+              <td>Scrolling Speed</td>
+              <td>:</td>
+              <td>
+                <select name="input_Scrolling_Speed" id="input_Scrolling_Speed">
+                  <option value="20">20</option>
+                  <option value="25">25</option>
+                  <option value="30">30</option>
+                  <option value="35">35</option>
+                  <option value="40">40</option>
+                  <option value="45">45</option>
+                  <option value="50">50</option>
+                  <option value="55">55</option>
+                  <option value="60">60</option>
+                  <option value="65">65</option>
+                  <option value="70">70</option>
+                  <option value="75">75</option>
+                </select>     
+              </td>
+              <td align="right">
+                <button type="button" class="myButton" style="font-size: 12px; padding: 3px 10px;" id="btn_Apply_Input_Scrolling_Speed" onclick="btn_Apply_Input_Scrolling_Speed_Click()">Apply</button>
+              </td>
+            </tr>
+            <!--  -->
+          </table>
+          
+          <hr style="border: 1px solid #e6e6e6;">
+          
+          <button type="button" class="myButton" id="btn_Get_Settings" onclick="btn_Get_Settings_Click()">Get Settings</button>
+        </form>
+      </div>
+  
+      <script>
+        setInterval(myTimer, 1000);
+        
+        var t_Hour;
+        var t_Minute;
+        var t_Second;
+        
+        const d_DaysOfTheWeek_Array = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+        
+        var d_DaysOfTheWeek_Now;
+        var d_Day;
+        var d_Month;
+        var d_Year;
+        
+        var full_DateTime;
+        
+        //________________________________________________________________________________ myTimer()
+        function myTimer() {
+          getDateTime();
+          document.getElementById("show_Date_Time").innerHTML = full_DateTime;
+        }
+        //________________________________________________________________________________ 
+        
+        //________________________________________________________________________________ getDateTime()
+        function getDateTime() {
+          const dt = new Date();
+          
+          t_Hour = dt.getHours();
+          t_Minute = dt.getMinutes();;
+          t_Second = dt.getSeconds();
+          
+          d_DaysOfTheWeek_Now = dt.getDay();
+          d_Day = dt.getDate();
+          d_Month = dt.getMonth() + 1;
+          d_Year = dt.getFullYear();
+          
+          full_DateTime  = "Date : <b>";
+          full_DateTime += d_DaysOfTheWeek_Array[d_DaysOfTheWeek_Now];
+          full_DateTime += ", ";
+          full_DateTime += d_Day.toString().padStart(2, '0') + "-" + d_Month.toString().padStart(2, '0') + "-" + d_Year;
+          full_DateTime += "</b> | Time : <b>" + t_Hour.toString().padStart(2, '0') + ":" + t_Minute.toString().padStart(2, '0') + ":" + t_Second.toString().padStart(2, '0') + "</b>";
+        }
+        //________________________________________________________________________________
+  
+        //________________________________________________________________________________ check_Key_TXT()
+        function check_Key_TXT() {
+          var key_TXT = document.getElementById("input_Keys_TXT").value;
+  
+          if (key_TXT == "") {
+            alert("Error ! \rThe key cannot be empty.");
+            return false;
+          } else {
+            return true;
+          }
+        }
+        //________________________________________________________________________________
+        
+        //________________________________________________________________________________ function btn_Apply_TimeDate_Click()
+        // Function to send settings to the server.
+        function btn_Apply_TimeDate_Click() {
+          if (check_Key_TXT() == false) return;
+          
+          var key_TXT = document.getElementById("input_Keys_TXT").value;
+          
+          getDateTime();
+  
+          var msg;
+          msg = "key=" + key_TXT;
+          msg += "&sta=setTimeDate";
+          msg += "&d_Year=" + d_Year;
+          msg += "&d_Month=" + d_Month;
+          msg += "&d_Day=" + d_Day;
+          msg += "&t_Hour=" + t_Hour;
+          msg += "&t_Minute=" + t_Minute;
+          msg += "&t_Second=" + t_Second;
+          
+          Send("set", msg);
+        }
+        //________________________________________________________________________________
+        
+        //________________________________________________________________________________ function btn_Apply_Display_Mode_Click()
+        // Function to send settings to the server.
+        function btn_Apply_Display_Mode_Click() {
+          if (check_Key_TXT() == false) return;
+          
+          var key_TXT = document.getElementById("input_Keys_TXT").value;
+          var input_Display_Mode = document.getElementById("input_Display_Mode").value;
+  
+          var msg;
+          msg = "key=" + key_TXT;
+          msg += "&sta=setDisplayMode";
+          msg += "&input_Display_Mode=" + input_Display_Mode;
+          
+          Send("set", msg);
+        }
+        //________________________________________________________________________________
+        
+        //________________________________________________________________________________ function btn_Apply_Input_Brightness_Click()
+        // Function to send settings to the server.
+        function btn_Apply_Input_Brightness_Click() {
+          if (check_Key_TXT() == false) return;
+          
+          var key_TXT = document.getElementById("input_Keys_TXT").value;
+          var input_Brightness = document.getElementById("input_Brightness").value;
+  
+          var msg;
+          msg = "key=" + key_TXT;
+          msg += "&sta=setBrightness";
+          msg += "&input_Brightness=" + input_Brightness;
+          
+          Send("set", msg);
+        }
+        //________________________________________________________________________________
+        
+        //________________________________________________________________________________ function btn_Apply_Input_Color_Clock_Click()
+        // Function to send settings to the server.
+        function btn_Apply_Input_Color_Clock_Click() {
+          if (check_Key_TXT() == false) return;
+          
+          var key_TXT = document.getElementById("input_Keys_TXT").value;
+          var input_Color_Clock = hexToRgb(document.getElementById("input_Color_Clock").value);
+          var Color_Clock_R = input_Color_Clock[0];
+          var Color_Clock_G = input_Color_Clock[1];
+          var Color_Clock_B = input_Color_Clock[2];
+  
+          var msg;
+          msg = "key=" + key_TXT;
+          msg += "&sta=setColorClock";
+          msg += "&Color_Clock_R=" + Color_Clock_R + "&Color_Clock_G=" + Color_Clock_G + "&Color_Clock_B=" + Color_Clock_B;
+          
+          Send("set", msg);
+        }
+        //________________________________________________________________________________
+        
+        //________________________________________________________________________________ function btn_Apply_Input_Color_Date_Click()
+        // Function to send settings to the server.
+        function btn_Apply_Input_Color_Date_Click() {
+          if (check_Key_TXT() == false) return;
+          
+          var key_TXT = document.getElementById("input_Keys_TXT").value;
+          var input_Color_Date = hexToRgb(document.getElementById("input_Color_Date").value);
+          var Color_Date_R = input_Color_Date[0];
+          var Color_Date_G = input_Color_Date[1];
+          var Color_Date_B = input_Color_Date[2];
+  
+          var msg;
+          msg = "key=" + key_TXT;
+          msg += "&sta=setColorDate";
+          msg += "&Color_Date_R=" + Color_Date_R + "&Color_Date_G=" + Color_Date_G + "&Color_Date_B=" + Color_Date_B;
+          
+          Send("set", msg);
+        }
+        //________________________________________________________________________________
+        
+        //________________________________________________________________________________ btn_Clear_Input_Scrolling_Text_Click()
+        function btn_Clear_Input_Scrolling_Text_Click() {
+          document.getElementById("input_Scrolling_Text").value = "";
+        }
+        //________________________________________________________________________________
+        
+        //________________________________________________________________________________ function btn_Apply_Input_Scrolling_Text_Click()
+        // Function to send settings to the server.
+        function btn_Apply_Input_Scrolling_Text_Click() {
+          if (check_Key_TXT() == false) return;
+          
+          var key_TXT = document.getElementById("input_Keys_TXT").value;
+          var input_Scrolling_Text = document.getElementById("input_Scrolling_Text").value;
+  
+          var msg;
+          msg = "key=" + key_TXT;
+          msg += "&sta=setScrollingText";
+          msg += "&input_Scrolling_Text=" + input_Scrolling_Text;
+          
+          Send("set", msg);
+        }
+        //________________________________________________________________________________
+        
+        //________________________________________________________________________________ function btn_Apply_Input_Text_Color_Click()
+        // Function to send settings to the server.
+        function btn_Apply_Input_Text_Color_Click() {
+          if (check_Key_TXT() == false) return;
+          
+          var key_TXT = document.getElementById("input_Keys_TXT").value;
+          var input_Text_Color = hexToRgb(document.getElementById("input_Text_Color").value);
+          var Color_Text_R = input_Text_Color[0];
+          var Color_Text_G = input_Text_Color[1];
+          var Color_Text_B = input_Text_Color[2];
+  
+          var msg;
+          msg = "key=" + key_TXT;
+          msg += "&sta=setTextColor";
+          msg += "&Color_Text_R=" + Color_Text_R + "&Color_Text_G=" + Color_Text_G + "&Color_Text_B=" + Color_Text_B;
+          
+          Send("set", msg);
+        }
+        //________________________________________________________________________________
+        
+        //________________________________________________________________________________ function btn_Apply_Input_Scrolling_Speed_Click()
+        // Function to send settings to the server.
+        function btn_Apply_Input_Scrolling_Speed_Click() {
+          if (check_Key_TXT() == false) return;
+          
+          var key_TXT = document.getElementById("input_Keys_TXT").value;
+          var input_Scrolling_Speed = document.getElementById("input_Scrolling_Speed").value;
+  
+          var msg;
+          msg = "key=" + key_TXT;
+          msg += "&sta=setScrollingSpeed";
+          msg += "&input_Scrolling_Speed=" + input_Scrolling_Speed;
+          
+          Send("set", msg);
+        }
+        //________________________________________________________________________________ 
+
+        //________________________________________________________________________________ btn_Get_Settings_Click()
+        function btn_Get_Settings_Click() {
+          if (check_Key_TXT() == false) return;
+          
+          var key_TXT = document.getElementById("input_Keys_TXT").value;
+          
+          var send_Request;
+          send_Request = "key=" + key_TXT;
+          send_Request += "&sta=getSettings";
+          
+          Send("get", send_Request);
+        }
+        //________________________________________________________________________________
+        
+        //________________________________________________________________________________ function hexToRgb(hex)
+        function hexToRgb(hex) {
+          const normal = hex.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+          if (normal) return normal.slice(1).map(e => parseInt(e, 16));
+  
+          const shorthand = hex.match(/^#([0-9a-f])([0-9a-f])([0-9a-f])$/i);
+          if (shorthand) return shorthand.slice(1).map(e => 0x11 * parseInt(e, 16));
+  
+          return null;
+        }
+        //________________________________________________________________________________
+        
+        //________________________________________________________________________________ rgbToHex(red, green, blue)
+        function rgbToHex(red, green, blue) {
+          const rgb = (red << 16) | (green << 8) | (blue << 0);
+          return '#' + (0x1000000 + rgb).toString(16).slice(1);
+        }
+        //________________________________________________________________________________
+  
+        //________________________________________________________________________________ function apply_the_Received_Settings(texts)
+        // Function to apply settings received from the server.
+        function apply_the_Received_Settings(texts) {
+          const myArray_Getting_Settings = texts.split("|");
+          
+          var input_Display_Mode = myArray_Getting_Settings[0];
+          var input_Brightness = myArray_Getting_Settings[1];
+          
+          var Color_Clock_R = myArray_Getting_Settings[2];
+          var Color_Clock_G = myArray_Getting_Settings[3];
+          var Color_Clock_B = myArray_Getting_Settings[4];
+          var input_Color_Clock = rgbToHex(Color_Clock_R, Color_Clock_G, Color_Clock_B);
+          
+          var Color_Date_R = myArray_Getting_Settings[5];
+          var Color_Date_G = myArray_Getting_Settings[6];
+          var Color_Date_B = myArray_Getting_Settings[7];
+          var input_Color_Date = rgbToHex(Color_Date_R, Color_Date_G, Color_Date_B);
+          
+          var input_Scrolling_Text = myArray_Getting_Settings[8];
+          
+          var Color_Text_R = myArray_Getting_Settings[9];
+          var Color_Text_G = myArray_Getting_Settings[10];
+          var Color_Text_B = myArray_Getting_Settings[11];
+          var input_Text_Color = rgbToHex(Color_Text_R, Color_Text_G, Color_Text_B);
+          
+          var input_Scrolling_Speed = myArray_Getting_Settings[12];
+          
+          
+          document.getElementById("input_Display_Mode").value = input_Display_Mode;
+          document.getElementById("input_Brightness").value = input_Brightness;
+          document.getElementById("input_Color_Clock").value = input_Color_Clock;
+          document.getElementById("input_Color_Date").value = input_Color_Date;
+          document.getElementById("input_Scrolling_Text").value = input_Scrolling_Text;
+          document.getElementById("input_Text_Color").value = input_Text_Color;
+          document.getElementById("input_Scrolling_Speed").value = input_Scrolling_Speed;
+        }
+        //________________________________________________________________________________
+  
+        //________________________________________________________________________________ function Send(sta, msg)
+        function Send(sta, msg) {
+          if (window.XMLHttpRequest) {
+            // code for IE7+, Firefox, Chrome, Opera, Safari
+            xmlhttp = new XMLHttpRequest();
+          } else {
+            // code for IE6, IE5
+            xmlhttp = new ActiveXObject("Microsoft.XMLHTTP");
+          }
+          xmlhttp.onreadystatechange = function() {
+            if (this.readyState == 4 && this.status == 200) {
+              if (this.responseText == "+ERR") {
+                alert("Error !\rWrong Key !\rPlease enter the correct key.");
+                return;
+              }
+
+              if (this.responseText == "+ERR_DM") {
+                alert("Error !\rThis setting is only for Display Mode : 1. \rPlease change the Display Mode to apply this setting.");
+                return;
+              }
+              
+              if (sta == "get") {
+                apply_the_Received_Settings(this.responseText);
+              }
+            }
+          }
+          xmlhttp.open("GET", "settings?" + msg, true);
+          xmlhttp.send();
+        }
+        //________________________________________________________________________________
+      </script>
+    </body>
+  </html>
+)=====";

@@ -1,0 +1,20 @@
+1. Please enter the "Key" that matches the "Key" in the Arduino code.
+2. The "Apply Time and Date" button is to set the time and date on the DS3231 RTC module based on the time and date on your device.
+3. "Display Mode" is the setting for display mode.
+    > Display Mode = 1 is a display mode in which the color of the clock, the color of the scrolling text to display the date
+      (including the name of the day) and the color of the message in
+      the scrolling text can be set manually.
+    > Display Mode = 2 is a display mode in which the color of the clock, the color of the scrolling text to display the date
+      (including the name of the day) and the color of the message in the scrolling text will change sequentially based on the color code
+      list in the Arduino code.
+4. "Brightness" is the setting to adjust the brightness on the P10 RGB 32x16 panel.
+5. "Clock Color" is a setting to adjust the color of the clock display (can only be set if display mode = 1).
+6. "Date Color" is a setting to set the scrolling text display color to display the name of the day and date
+   (can only be set if display mode = 1).
+7. "Scrolling Text" is a setting to set the message displayed on the scrolling text (after scrolling the text containing the name of
+    the day and date).
+8. "Text Color" is a setting to set the text color for displaying messages in scrolling text (does not include scrolling text for names of days
+    and dates and can only be set if display mode = 1).
+9. "Scrolling Speed" is a setting to set the speed of scrolling text (scrolling text for names of days and dates and scrolling text for
+    displaying messages).
+10. The "Get Settings" button is to get the settings stored in the ESP32 flash memory.

@@ -1,0 +1,4 @@
+- Adafruit BusIO (V1.16.1) by Adafruit                    : Install via "Manage Libraries" or "Library Manager" in the Arduino IDE with the search keyword "Adafruit BusIO".
+- RTClib by Adafruit (V2.1.4)                             : Install via "Manage Libraries" or "Library Manager" in the Arduino IDE with the search keyword "RTClib".
+- Adafruit GFX Library by Adafruit (V1.11.9)              : Install via "Manage Libraries" or "Library Manager" in the Arduino IDE with the search keyword "Adafruit GFX Library".
+- PxMatrix Library by 2dom (Dominic Buchstaller) (V1.8.2) : https://github.com/2dom/PxMatrix/tree/master
