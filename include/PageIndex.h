@@ -6,7 +6,7 @@
 const char MAIN_page[] PROGMEM = R"=====(
   <!DOCTYPE html>
   <html>
-    <title>Digital Clcok & Scrolling Text with ESP32 and P10 RGB 32x16</title>
+    <title>Digital Clock, Countdown & Scrolling Text with ESP32 and P10 RGB 32x16</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
       html {font-family: Helvetica, sans-serif;}
@@ -69,7 +69,7 @@ const char MAIN_page[] PROGMEM = R"=====(
     </style>
     <body>
       <div style="margin: 10px">
-        <h1>Digital Clock & Scrolling Text with ESP32 and P10 RGB 32x16</h1>
+        <h1>Digital Clock, Countdown & Scrolling Text with ESP32 and P10 RGB 32x16</h1>
         
         <div class="div_Form">
           <div style="margin-bottom: 10px;">
@@ -594,8 +594,19 @@ const char MAIN_page[] PROGMEM = R"=====(
           var second = document.getElementById("countdown_Second").value;
           var title = document.getElementById("countdown_Title").value;
           
-          if (!day || !month || !year || !hour || minute === "" || second === "" || !title) {
+          if (!day || !month || !year || hour === "" || minute === "" || second === "" || !title) {
             alert("Please fill all countdown fields!");
+            return;
+          }
+          
+          // Validation des valeurs
+          if (day < 1 || day > 31 || month < 1 || month > 12 || year < 2024 || year > 2099) {
+            alert("Please enter valid date values!");
+            return;
+          }
+          
+          if (hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59) {
+            alert("Please enter valid time values!");
             return;
           }
           

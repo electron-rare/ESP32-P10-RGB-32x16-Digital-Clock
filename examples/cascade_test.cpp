@@ -37,7 +37,7 @@
 #endif
 
 #ifndef MATRIX_PANELS_Y
-#define MATRIX_PANELS_Y 1
+#define MATRIX_PANELS_Y 3
 #endif
 
 // Calcul des dimensions totales

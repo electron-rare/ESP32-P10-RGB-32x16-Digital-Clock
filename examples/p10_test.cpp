@@ -7,7 +7,8 @@
 #include <PxMatrix.h>
 
 // Configuration SPI
-#define PxMATRIX_SPI_FREQUENCY 10000000
+#define PxMATRIX_SPI_FREQUENCY 5000000
+#define display_size 8 // 1/8 scan pour un panneau P10
 
 // Pins pour la matrice LED
 #define P_LAT 5
@@ -69,7 +70,7 @@ void setup() {
   Serial.println("=== Test P10 RGB 32x16 Matrix ===");
 
   // Initialisation de l'affichage
-  display.begin(8); // Valeur 8 pour un panneau 1/8 scan
+  display.begin(4); // Valeur 2 ou 4 ou  ?8 pour un panneau 1/8 scan
   delay(100);
 
   // Activation des interruptions timer

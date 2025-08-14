@@ -20,6 +20,7 @@
 
 // Inclusion des bibliothèques
 #include <Arduino.h>
+#include <stdint.h>
 #include <PxMatrix.h>
 #include <RTClib.h>
 #include <Preferences.h>
@@ -27,6 +28,14 @@
 #include <WebServer.h>
 #include <nvs_flash.h>
 #include "PageIndex.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <driver/timer.h>
+
+// Prototypes des tâches FreeRTOS
+void DisplayTask(void *pvParameters);
+void WebServerTask(void *pvParameters);
+void WiFiTask(void *pvParameters);
 
 // Pins pour la matrice LED
 #define P_LAT 5
@@ -91,7 +100,7 @@ char text_Scrolling_Text[151];
 uint16_t text_Length_In_Pixel;
 bool set_up_Scrolling_Text_Length = true;
 bool start_Scroll_Text = false;
-byte scrolling_text_Display_Order = 0;
+int scrolling_text_Display_Order = 0;
 bool reset_Scrolling_Text = false;
 
 // Variables de temps
@@ -101,9 +110,9 @@ unsigned long prevMill_Show_Clock = 0;
 const long interval_Show_Clock = 500;
 
 // Variables pour la date et l'heure
-char daysOfTheWeek[7][10] = {"SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"};
+char daysOfTheWeek[7][10] = {"LUNDI", "MARDI", "MERCREDI", "JEUDI", "VENDREDI", "SAMEDI", "DIMANCHE"};
 char chr_t_Minute[3];
-byte minute_Val, last_minute_Val;
+uint8_t minute_Val, last_minute_Val;
 char chr_t_Hour[3];
 char day_and_date_Text[25];
 bool blink_Colon = false;
@@ -112,11 +121,11 @@ uint16_t day_and_date_Text_Color;
 
 // Variables de configuration
 int d_Year;
-byte d_Month, d_Day;
-byte t_Hour, t_Minute, t_Second;
-byte input_Display_Mode = 1;
-byte input_Brightness = 125;
-byte input_Scrolling_Speed = 45;
+uint8_t d_Month, d_Day;
+uint8_t t_Hour, t_Minute, t_Second;
+uint8_t input_Display_Mode = 1;
+uint8_t input_Brightness = 125;
+uint8_t input_Scrolling_Speed = 45;
 int Color_Clock_R = 255, Color_Clock_G = 0, Color_Clock_B = 0;
 int Color_Date_R = 0, Color_Date_G = 255, Color_Date_B = 0;
 int Color_Text_R = 0, Color_Text_G = 0, Color_Text_B = 255;
@@ -125,11 +134,11 @@ char input_Scrolling_Text[151] = "ESP32 P10 RGB Digital Clock with PlatformIO";
 // Variables pour le countdown
 bool countdown_Active = false;
 int countdown_Year = 2025;
-byte countdown_Month = 12;
-byte countdown_Day = 31;
-byte countdown_Hour = 23;
-byte countdown_Minute = 59;
-byte countdown_Second = 59;
+int countdown_Month = 12;
+int countdown_Day = 31;
+int countdown_Hour = 23;
+int countdown_Minute = 59;
+int countdown_Second = 59;
 char countdown_Title[51] = "NEW YEAR";
 char countdown_Text[101];
 bool countdown_Expired = false;
@@ -145,9 +154,9 @@ const char* ap_password = "esp32clock";
 
 // Clé de sécurité pour l'interface web
 #define KEY_TXT "p10rgbesp32ws"
-
+  // display_update_enable(true); // NE PAS activer ici
 // Mode de fonctionnement WiFi
-bool useStationMode = true; // true = se connecter au WiFi, false = créer un point d'accès
+bool useStationMode = false; // true = se connecter au WiFi, false = créer un point d'accès
 
 // Objets RTC et Preferences
 RTC_DS3231 rtc;
@@ -158,21 +167,37 @@ WebServer server(80);
 
 // Gestionnaire d'interruption pour l'affichage
 void IRAM_ATTR display_updater() {
-  portENTER_CRITICAL_ISR(&timerMux);
-  display.display(display_draw_time);
-  portEXIT_CRITICAL_ISR(&timerMux);
+  if (timer != NULL) {
+    portENTER_CRITICAL_ISR(&timerMux);
+    display.display(display_draw_time);
+    portEXIT_CRITICAL_ISR(&timerMux);
+  }
 }
 
 // Activation/désactivation du timer d'affichage
 void display_update_enable(bool is_enable) {
   if (is_enable) {
-    timer = timerBegin(0, 80, true);
-    timerAttachInterrupt(timer, &display_updater, true);
-    timerAlarmWrite(timer, 1500, true);
-    timerAlarmEnable(timer);
+    if (timer == NULL) {
+      timer = timerBegin(0, 80, true);
+      if (timer != NULL) {
+        timerAttachInterrupt(timer, &display_updater, true);
+        timerAlarmWrite(timer, 1500, true);
+        timerAlarmEnable(timer);
+        Serial.println("Display timer enabled successfully");
+      } else {
+        Serial.println("ERROR: Failed to create display timer");
+      }
+    } else {
+      Serial.println("Display timer already enabled");
+    }
   } else {
-    timerDetachInterrupt(timer);
-    timerAlarmDisable(timer);
+    if (timer != NULL) {
+      timerAlarmDisable(timer);
+      timerDetachInterrupt(timer);
+      timerEnd(timer);
+      timer = NULL;
+      Serial.println("Display timer disabled");
+    }
   }
 }
 
@@ -228,6 +253,7 @@ void set_ESP32_Access_Point() {
   IPAddress gateway(192, 168, 1, 1);
   IPAddress subnet(255, 255, 255, 0);
   
+  // SUPPRESSION de l'activation du timer ici - sera fait plus tard
   WiFi.softAPConfig(local_ip, gateway, subnet);
   Serial.println("-------------");
   Serial.print("SSID name : ");
@@ -366,7 +392,7 @@ void loadSettings() {
   // Paramètres du countdown
   countdown_Active = preferences.getBool("cd_Active", false);
   countdown_Year = preferences.getInt("cd_Year", 2025);
-  countdown_Month = preferences.getInt("cd_Month", 12);
+  countdown_Month = preferences.getInt("cd_Year", 12);
   countdown_Day = preferences.getInt("cd_Day", 31);
   countdown_Hour = preferences.getInt("cd_Hour", 23);
   countdown_Minute = preferences.getInt("cd_Minute", 59);
@@ -437,13 +463,15 @@ void handleSettings() {
     Serial.print("Set Display Mode : ");
     Serial.println(input_Display_Mode);
 
+    // Arrêt sécurisé du timer avant modification des préférences
     display_update_enable(false);
-    delay(100);
+    delay(50); // Attendre que les tâches se terminent
     
     preferences.begin("mySettings", false);
     preferences.putInt("input_DM", input_Display_Mode);
     preferences.end();
     
+    delay(50); // Délai avant redémarrage
     display_update_enable(true);
     
     if (input_Display_Mode == 1) {
@@ -466,13 +494,15 @@ void handleSettings() {
     Serial.print("Set Brightness : ");
     Serial.println(input_Brightness);
 
+    // Arrêt sécurisé du timer avant modification des préférences
     display_update_enable(false);
-    delay(100);
+    delay(50);
     
     preferences.begin("mySettings", false);
     preferences.putInt("input_BRT", input_Brightness);
     preferences.end();
     
+    delay(50);
     display_update_enable(true);
     display.setBrightness(input_Brightness);
   }
@@ -505,8 +535,9 @@ void handleSettings() {
     
     Serial.printf("Set Clock Color (RGB) : %d,%d,%d\n", Color_Clock_R, Color_Clock_G, Color_Clock_B);
 
+    // Arrêt sécurisé du timer avant modification des préférences
     display_update_enable(false);
-    delay(100);
+    delay(50);
     
     preferences.begin("mySettings", false);
     preferences.putInt("CC_R", Color_Clock_R);
@@ -514,6 +545,7 @@ void handleSettings() {
     preferences.putInt("CC_B", Color_Clock_B);
     preferences.end();
     
+    delay(50);
     display_update_enable(true);
     clock_Color = display.color565(Color_Clock_R, Color_Clock_G, Color_Clock_B);
   }
@@ -532,8 +564,9 @@ void handleSettings() {
     
     Serial.printf("Set Date Color (RGB) : %d,%d,%d\n", Color_Date_R, Color_Date_G, Color_Date_B);
 
+    // Arrêt sécurisé du timer avant modification des préférences
     display_update_enable(false);
-    delay(100);
+    delay(50);
     
     preferences.begin("mySettings", false);
     preferences.putInt("DC_R", Color_Date_R);
@@ -541,6 +574,7 @@ void handleSettings() {
     preferences.putInt("DC_B", Color_Date_B);
     preferences.end();
     
+    delay(50);
     display_update_enable(true);
     day_and_date_Text_Color = display.color565(Color_Date_R, Color_Date_G, Color_Date_B);
   }
@@ -559,8 +593,9 @@ void handleSettings() {
     
     Serial.printf("Set Text Color (RGB) : %d,%d,%d\n", Color_Text_R, Color_Text_G, Color_Text_B);
 
+    // Arrêt sécurisé du timer avant modification des préférences
     display_update_enable(false);
-    delay(100);
+    delay(50);
     
     preferences.begin("mySettings", false);
     preferences.putInt("CT_R", Color_Text_R);
@@ -568,6 +603,7 @@ void handleSettings() {
     preferences.putInt("CT_B", Color_Text_B);
     preferences.end();
     
+    delay(50);
     display_update_enable(true);
     text_Color = display.color565(Color_Text_R, Color_Text_G, Color_Text_B);
   }
@@ -593,7 +629,7 @@ void handleSettings() {
   else if (incoming_Settings == "setCountdown") {
     countdown_Active = server.arg("countdown_Active") == "true";
     countdown_Year = server.arg("countdown_Year").toInt();
-    countdown_Month = server.arg("countdown_Month").toInt();
+    countdown_Month = server.arg("countdown_Year").toInt();
     countdown_Day = server.arg("countdown_Day").toInt();
     countdown_Hour = server.arg("countdown_Hour").toInt();
     countdown_Minute = server.arg("countdown_Minute").toInt();
@@ -640,8 +676,9 @@ void handleSettings() {
     
     Serial.printf("Set Countdown Color (RGB) : %d,%d,%d\n", Color_Countdown_R, Color_Countdown_G, Color_Countdown_B);
 
+    // Arrêt sécurisé du timer avant modification des préférences
     display_update_enable(false);
-    delay(100);
+    delay(50);
     
     preferences.begin("mySettings", false);
     preferences.putInt("CD_R", Color_Countdown_R);
@@ -649,6 +686,7 @@ void handleSettings() {
     preferences.putInt("CD_B", Color_Countdown_B);
     preferences.end();
     
+    delay(50);
     display_update_enable(true);
   }
 
@@ -703,14 +741,28 @@ void setup() {
   Serial.printf("Taille totale: %dx%d pixels\n", TOTAL_WIDTH, TOTAL_HEIGHT);
   Serial.printf("Nombre total panneaux: %d\n", MATRIX_PANELS_X * MATRIX_PANELS_Y);
   
-  // Ajustement automatique de la luminosité selon le nombre de panneaux
+  // Ajustement automatique de la luminosité et du draw_time selon le nombre de panneaux
   int auto_brightness = 125;
-  if (MATRIX_PANELS_X > 2) auto_brightness = 100;
-  if (MATRIX_PANELS_X > 4) auto_brightness = 80;
-  if (MATRIX_PANELS_X > 6) auto_brightness = 60;
+  uint8_t auto_draw_time = 30;
+  
+  if (MATRIX_PANELS_X > 2) {
+    auto_brightness = 100;
+    auto_draw_time = 25;
+  }
+  if (MATRIX_PANELS_X > 4) {
+    auto_brightness = 80;
+    auto_draw_time = 20;
+  }
+  if (MATRIX_PANELS_X > 6) {
+    auto_brightness = 60;
+    auto_draw_time = 15;
+  }
+  
   input_Brightness = auto_brightness;
+  display_draw_time = auto_draw_time;
   
   Serial.printf("Luminosité auto-ajustée: %d\n", auto_brightness);
+  Serial.printf("Draw time ajusté: %d\n", auto_draw_time);
   Serial.println("------------------------------");
 
   // Initialisation du RTC
@@ -727,10 +779,7 @@ void setup() {
   display.begin(8); // Valeur 8 pour un panneau 1/8 scan
   delay(100);
 
-  // Activation des interruptions timer
-  display_update_enable(true);
-  delay(100);
-
+  // NE PAS activer le timer ici - attendre après le WiFi
   display.clearDisplay();
   delay(500);
 
@@ -740,7 +789,7 @@ void setup() {
   // Appliquer la luminosité ajustée si pas de sauvegarde
   display.setBrightness(input_Brightness);
 
-  // Test d'affichage des couleurs avec message adapté
+  // Test d'affichage des couleurs avec message adapté - SANS timer
   Serial.println("Testing display colors...");
   
   // Test de bordures pour vérifier l'alignement (panneaux multiples)
@@ -764,7 +813,7 @@ void setup() {
     display.clearDisplay();
   }
   
-  // Test des couleurs
+  // Test des couleurs - mode manuel (sans timer)
   display.fillScreen(myRED);
   delay(1000);
   display.fillScreen(myGREEN);
@@ -822,154 +871,169 @@ void setup() {
   prepare_and_start_The_Server();
 
   Serial.println("\nSetup completed. System ready!");
-  
   // Message de fin adapté à la configuration
   if (MATRIX_PANELS_X > 1) {
     Serial.printf("Running with %dx%d panels cascade (%dx%d total resolution)\n", 
                   MATRIX_PANELS_X, MATRIX_PANELS_Y, TOTAL_WIDTH, TOTAL_HEIGHT);
   }
+
+  // ACTIVATION DU TIMER D'AFFICHAGE APRÈS TOUT LE RESTE
+  Serial.println("Activating display timer...");
+  display_update_enable(true);
+  delay(200); // Attendre que le timer soit stable
+
+  // --- FreeRTOS : création des tâches principales EN DERNIÈRE ÉTAPE ---
+  // Attendre un peu que tout soit stable avant de créer les tâches
+  delay(100);
+  
+  // Tâche d'affichage (priorité 2)
+  xTaskCreate(DisplayTask, "DisplayTask", 4096, NULL, 2, NULL);
+  // Tâche serveur web (priorité 1)
+  xTaskCreate(WebServerTask, "WebServerTask", 4096, NULL, 1, NULL);
+  // Tâche WiFi (priorité 1, extensible)
+  xTaskCreate(WiFiTask, "WiFiTask", 2048, NULL, 1, NULL);
+  
+  Serial.println("FreeRTOS tasks created successfully!");
 }
 
-void loop() {
-  // Gestion du serveur web
-  server.handleClient();
-
-  // Mise à jour de l'heure
-  unsigned long currentMillis_Update_Time = millis();
-  if (currentMillis_Update_Time - prevMill_Update_Time >= interval_Update_Time) {
-    prevMill_Update_Time = currentMillis_Update_Time;
-    get_Time();
-    blink_Colon = !blink_Colon;
-    
-    // Mise à jour du countdown si actif
-    if (countdown_Active) {
-      updateCountdown();
-    }
-  }
-
-  // Affichage de l'horloge
-  unsigned long currentMillis_Show_Clock = millis();
-  if (currentMillis_Show_Clock - prevMill_Show_Clock >= interval_Show_Clock) {
-    prevMill_Show_Clock = currentMillis_Show_Clock;
-
-    display.setTextSize(1);
-
-    // Couleur selon le mode
-    if (input_Display_Mode == 1) {
-      clock_Color = display.color565(Color_Clock_R, Color_Clock_G, Color_Clock_B);
-    } else {
-      clock_Color = myCOLOR_ARRAY[cnt_Color];
-    }
-
-    // Calcul de la position centrée pour l'horloge (adapté à la largeur totale)
-    int clock_width = 30; // Approximation pour "HH:MM"
-    int clock_x = (TOTAL_WIDTH - clock_width) / 2;
-    if (clock_x < 1) clock_x = 1;
-
-    // Effacer et afficher les heures
-    if (last_minute_Val != minute_Val) display.fillRect(clock_x, 0, 11, 7, myBLACK);
-    display.setTextColor(clock_Color);
-    display.setCursor(clock_x, 0);
-    display.print(chr_t_Hour);
-
-    // Position des deux points (centrée)
-    int colon_x = clock_x + 14;
-    if (blink_Colon) {
-      drawColon(colon_x, 1, clock_Color);
-    } else {
-      drawColon(colon_x, 1, myBLACK);
-    }
-
-    // Effacer et afficher les minutes
-    if (last_minute_Val != minute_Val) display.fillRect(clock_x + 19, 0, 11, 7, myBLACK);
-    display.setTextColor(clock_Color);
-    display.setCursor(clock_x + 19, 0);
-    display.print(chr_t_Minute);
-
-    last_minute_Val = minute_Val;
-  }
-
-  // Gestion du texte défilant
-  if (reset_Scrolling_Text) {
-    start_Scroll_Text = false;
-    set_up_Scrolling_Text_Length = true;
-    reset_Scrolling_Text = false;
-  }
-
-  if (start_Scroll_Text == false) {
-    scrolling_text_Display_Order++;
-    
-    int maxOrder = countdown_Active ? 3 : 2; // 3 éléments si countdown actif, sinon 2
-    if (input_Display_Mode == 2) {
-      maxOrder++; // Un ordre supplémentaire pour le changement de couleur
-    }
-    
-    if (scrolling_text_Display_Order > maxOrder) scrolling_text_Display_Order = 1;
-
-    // Affichage de la date
-    if (scrolling_text_Display_Order == 1) {
-      get_Date();
-      display.setTextSize(1);
-      scrolling_Y_Pos = 8;
-      
-      if (input_Display_Mode == 1) {
-        scrolling_Text_Color = display.color565(Color_Date_R, Color_Date_G, Color_Date_B);
-      } else {
-        int next_cnt_Color = (cnt_Color + 1) % myCOLOR_ARRAY_Length;
-        scrolling_Text_Color = myCOLOR_ARRAY[next_cnt_Color];
+// --- FreeRTOS : Tâche d'affichage principale ---
+void DisplayTask(void *pvParameters) {
+  // Attendre un peu que le système soit complètement initialisé
+  vTaskDelay(pdMS_TO_TICKS(100));
+  
+  for (;;) {
+    // Mise à jour de l'heure et du countdown
+    unsigned long currentMillis_Update_Time = millis();
+    if (currentMillis_Update_Time - prevMill_Update_Time >= interval_Update_Time) {
+      prevMill_Update_Time = currentMillis_Update_Time;
+      get_Time();
+      blink_Colon = !blink_Colon;
+      if (countdown_Active) {
+        updateCountdown();
       }
-      
-      strcpy(text_Scrolling_Text, day_and_date_Text);
     }
 
-    // Affichage du texte personnalisé
-    if (scrolling_text_Display_Order == 2) {
+    // Affichage de l'horloge
+    unsigned long currentMillis_Show_Clock = millis();
+    if (currentMillis_Show_Clock - prevMill_Show_Clock >= interval_Show_Clock) {
+      prevMill_Show_Clock = currentMillis_Show_Clock;
       display.setTextSize(1);
-      scrolling_Y_Pos = 8;
-      
+      // Couleur selon le mode
       if (input_Display_Mode == 1) {
-        scrolling_Text_Color = display.color565(Color_Text_R, Color_Text_G, Color_Text_B);
+        clock_Color = display.color565(Color_Clock_R, Color_Clock_G, Color_Clock_B);
       } else {
-        int next_cnt_Color = (cnt_Color + 2) % myCOLOR_ARRAY_Length;
-        scrolling_Text_Color = myCOLOR_ARRAY[next_cnt_Color];
+        clock_Color = myCOLOR_ARRAY[cnt_Color];
       }
-      
-      strcpy(text_Scrolling_Text, input_Scrolling_Text);
+      int clock_width = 30;
+      int clock_x = (TOTAL_WIDTH - clock_width) / 2;
+      if (clock_x < 1) clock_x = 1;
+      if (last_minute_Val != minute_Val) display.fillRect(clock_x, 0, 11, 7, myBLACK);
+      display.setTextColor(clock_Color);
+      display.setCursor(clock_x, 0);
+      display.print(chr_t_Hour);
+      int colon_x = clock_x + 14;
+      if (blink_Colon) {
+        drawColon(colon_x, 1, clock_Color);
+      } else {
+        drawColon(colon_x, 1, myBLACK);
+      }
+      if (last_minute_Val != minute_Val) display.fillRect(clock_x + 19, 0, 11, 7, myBLACK);
+      display.setTextColor(clock_Color);
+      display.setCursor(clock_x + 19, 0);
+      display.print(chr_t_Minute);
+      last_minute_Val = minute_Val;
     }
 
-    // Affichage du countdown (si actif)
-    if (scrolling_text_Display_Order == 3 && countdown_Active) {
-      display.setTextSize(1);
-      scrolling_Y_Pos = 8;
-      
-      if (input_Display_Mode == 1) {
-        if (countdown_Expired) {
-          scrolling_Text_Color = myRED; // Rouge si expiré
+    // Gestion du texte défilant
+    if (reset_Scrolling_Text) {
+      start_Scroll_Text = false;
+      set_up_Scrolling_Text_Length = true;
+      reset_Scrolling_Text = false;
+    }
+    if (start_Scroll_Text == false) {
+      scrolling_text_Display_Order++;
+      int maxOrder = countdown_Active ? 3 : 2;
+      if (input_Display_Mode == 2) {
+        maxOrder++;
+      }
+      if (scrolling_text_Display_Order > maxOrder) scrolling_text_Display_Order = 1;
+      if (scrolling_text_Display_Order == 1) {
+        get_Date();
+        display.setTextSize(1);
+        scrolling_Y_Pos = 8;
+        if (input_Display_Mode == 1) {
+          scrolling_Text_Color = display.color565(Color_Date_R, Color_Date_G, Color_Date_B);
         } else {
-          scrolling_Text_Color = display.color565(Color_Countdown_R, Color_Countdown_G, Color_Countdown_B);
+          int next_cnt_Color = (cnt_Color + 1) % myCOLOR_ARRAY_Length;
+          scrolling_Text_Color = myCOLOR_ARRAY[next_cnt_Color];
         }
-      } else {
-        int next_cnt_Color = (cnt_Color + 3) % myCOLOR_ARRAY_Length;
-        scrolling_Text_Color = myCOLOR_ARRAY[next_cnt_Color];
+        strcpy(text_Scrolling_Text, day_and_date_Text);
       }
-      
-      strcpy(text_Scrolling_Text, countdown_Text);
+      if (scrolling_text_Display_Order == 2) {
+        display.setTextSize(1);
+        scrolling_Y_Pos = 8;
+        if (input_Display_Mode == 1) {
+          scrolling_Text_Color = display.color565(Color_Text_R, Color_Text_G, Color_Text_B);
+        } else {
+          int next_cnt_Color = (cnt_Color + 2) % myCOLOR_ARRAY_Length;
+          scrolling_Text_Color = myCOLOR_ARRAY[next_cnt_Color];
+        }
+        strcpy(text_Scrolling_Text, input_Scrolling_Text);
+      }
+      if (scrolling_text_Display_Order == 3 && countdown_Active) {
+        display.setTextSize(1);
+        scrolling_Y_Pos = 8;
+        if (input_Display_Mode == 1) {
+          if (countdown_Expired) {
+            scrolling_Text_Color = myRED;
+          } else {
+            scrolling_Text_Color = display.color565(Color_Countdown_R, Color_Countdown_G, Color_Countdown_B);
+          }
+        } else {
+          int next_cnt_Color = (cnt_Color + 3) % myCOLOR_ARRAY_Length;
+          scrolling_Text_Color = myCOLOR_ARRAY[next_cnt_Color];
+        }
+        strcpy(text_Scrolling_Text, countdown_Text);
+      }
+      int colorChangeOrder = countdown_Active ? 4 : 3;
+      if (scrolling_text_Display_Order == colorChangeOrder && input_Display_Mode == 2) {
+        cnt_Color = (cnt_Color + 1) % myCOLOR_ARRAY_Length;
+        strcpy(text_Scrolling_Text, "");
+      }
+      start_Scroll_Text = true;
     }
-
-    // Changement de couleur (mode 2 seulement)
-    int colorChangeOrder = countdown_Active ? 4 : 3;
-    if (scrolling_text_Display_Order == colorChangeOrder && input_Display_Mode == 2) {
-      cnt_Color = (cnt_Color + 1) % myCOLOR_ARRAY_Length;
-      strcpy(text_Scrolling_Text, "");
+    if (start_Scroll_Text) {
+      run_Scrolling_Text(scrolling_Y_Pos, input_Scrolling_Speed, text_Scrolling_Text, scrolling_Text_Color);
     }
-
-    start_Scroll_Text = true;
+    vTaskDelay(pdMS_TO_TICKS(10)); // FreeRTOS : délai approprié de 10ms
   }
+}
 
-  if (start_Scroll_Text) {
-    run_Scrolling_Text(scrolling_Y_Pos, input_Scrolling_Speed, text_Scrolling_Text, scrolling_Text_Color);
+// --- FreeRTOS : Tâche serveur web ---
+void WebServerTask(void *pvParameters) {
+  // Attendre un peu que le système soit complètement initialisé
+  vTaskDelay(pdMS_TO_TICKS(200));
+  
+  for (;;) {
+    server.handleClient();
+    vTaskDelay(pdMS_TO_TICKS(5)); // FreeRTOS : délai approprié de 5ms
   }
+}
 
-  // Petit délai pour éviter la surcharge du processeur
-  delay(1);
+// --- FreeRTOS : Tâche WiFi (optionnelle, extensible) ---
+void WiFiTask(void *pvParameters) {
+  // Attendre un peu que le système soit complètement initialisé
+  vTaskDelay(pdMS_TO_TICKS(300));
+  
+  for (;;) {
+    // Ici, vous pouvez ajouter la logique de surveillance ou de reconnexion WiFi
+    vTaskDelay(pdMS_TO_TICKS(1000)); // FreeRTOS : délai approprié de 1 seconde
+  }
+}
+
+// Fonction loop() vide requise par le framework Arduino
+// Toute la logique est maintenant gérée par les tâches FreeRTOS
+void loop() {
+  // Fonction vide - toute la logique est dans les tâches FreeRTOS
+  delay(1000); // Utiliser delay() Arduino au lieu de vTaskDelay
 }
