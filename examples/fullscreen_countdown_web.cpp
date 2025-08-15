@@ -144,6 +144,7 @@ uint16_t myORANGE   = display.color565(255, 165, 0);
 
 // Prototypes des fonctions
 void IRAM_ATTR display_updater();
+void display_update_enable(bool is_enable); // prototype pour usage anticipé
 
 // Utilitaire : copie tronquée en respectant les limites UTF-8 (nombre de caractères et non octets)
 // maxChars : nombre maximum de caractères (glyphes) à conserver (excluant le nul final)
@@ -230,6 +231,62 @@ static bool marqueeOneShotCenterPhase = false; // phase centrée initiale
 static unsigned long marqueeOneShotStart = 0;  // début phase centrée
 static unsigned long marqueeOneShotRestartAt = 0; // moment de relance
 static unsigned long marqueeCycleStartMs = 0;   // début cycle pour accélération
+// Flag de forçage de recalcul layout (modifié via Web)
+volatile bool forceLayout = false;
+// Padding supplémentaire aux extrémités (espaces visuels entrée/sortie défilement)
+int marqueeEdgePadding = 2; // pixels
+
+// --- Normalisation accents (UTF-8 -> ASCII approximatif) ---
+// Remplace les caractères accentués français communs par leur équivalent non accentué.
+// Objectif: permettre un rendu cohérent avec les polices GFX limitées au Basic ASCII.
+size_t foldAccents(const char *in, char *out, size_t outSize) {
+  if (!in || !out || outSize == 0) return 0;
+  size_t o = 0;
+  while (*in && o + 1 < outSize) {
+    unsigned char c = (unsigned char)*in;
+    if (c < 0x80) {
+      // ASCII direct
+      out[o++] = *in++;
+    } else if ((c == 0xC3) && in[1]) {
+      unsigned char d = (unsigned char)in[1];
+      char rep = 0; // remplacement
+      switch (d) {
+        case 0x80: case 0x81: rep='A'; break; // ÀÁ
+        case 0x82: rep='A'; break; // Â
+        case 0x84: rep='A'; break; // Ä
+        case 0x87: rep='C'; break; // Ç
+        case 0x88: case 0x89: rep='E'; break; // ÈÉ
+        case 0x8A: case 0x8B: rep='E'; break; // ÊË
+        case 0x8E: case 0x8F: rep='I'; break; // ÎÏ
+        case 0x94: case 0x96: rep='O'; break; // ÔÖ
+        case 0x99: case 0x9B: rep='U'; break; // ÙÛ
+        case 0x9C: rep='U'; break; // Ü
+        case 0xA0: case 0xA1: rep='a'; break; // àá
+        case 0xA2: rep='a'; break; // â
+        case 0xA4: rep='a'; break; // ä
+        case 0xA7: rep='c'; break; // ç
+        case 0xA8: case 0xA9: rep='e'; break; // è é
+        case 0xAA: case 0xAB: rep='e'; break; // ê ë
+        case 0xAE: case 0xAF: rep='i'; break; // î ï
+        case 0xB4: case 0xB6: rep='o'; break; // ô ö
+        case 0xB9: case 0xBB: rep='u'; break; // ù û
+        case 0xBC: rep='u'; break; // ü
+      }
+      if (rep) {
+        out[o++] = rep;
+        in += 2;
+      } else {
+        // caractère non géré -> ignorer les deux bytes
+        in += 2;
+      }
+    } else {
+      // Séquence multioctet non gérée -> ignorer octet
+      in++;
+    }
+  }
+  out[o] = '\0';
+  return o;
+}
 
 // Variable pour indiquer qu'il faut sauvegarder les paramètres
 volatile bool saveRequested = false;
@@ -640,7 +697,7 @@ const GFXfont* getFontByIndex(int index) {
 // Affichage du compte à rebours en plein écran
 void displayFullscreenCountdown(int days, int hours, int minutes, int seconds) {
   // --- Cache layout ---
-  static char lastText[24] = "";
+  static char lastText[64] = ""; // élargi pour titres jusqu'à 50 chars
   static bool lastExpired = false;
   static int lastFontIndex = -1;
   static int lastTextSizeTier = -1;
@@ -648,6 +705,7 @@ void displayFullscreenCountdown(int days, int hours, int minutes, int seconds) {
   static uint8_t cachedSetSize = 1;
   static bool cachedIsEndMsg = false;
   static uint16_t cachedTextPixelWidth = 0; // pour calcul marquee
+  static int16_t cachedFontXOffset = 0;     // x1 pour centrage correct
 
   // Recalculer systématiquement la couleur utilisateur (évite usage d'une valeur obsolète)
   int localR = countdownColorR;
@@ -673,9 +731,12 @@ void displayFullscreenCountdown(int days, int hours, int minutes, int seconds) {
   }
 
   // Préparer le texte cible
-  char currentText[24];
+  char currentText[64];
   if (countdownExpired) {
-    strncpy(currentText, countdownTitle, sizeof(currentText)-1);
+    // Normaliser accents pour compatibilité police si nécessaire
+    char folded[64];
+    foldAccents(countdownTitle, folded, sizeof(folded));
+    strncpy(currentText, folded, sizeof(currentText)-1);
     currentText[sizeof(currentText)-1] = '\0';
   } else {
     switch (displayFormat) {
@@ -686,7 +747,7 @@ void displayFullscreenCountdown(int days, int hours, int minutes, int seconds) {
     }
   }
 
-  bool needRecalc = countdownExpired != lastExpired || (strcmp(currentText, lastText) != 0) || fontIndex != lastFontIndex || countdownTextSize != lastTextSizeTier;
+  bool needRecalc = forceLayout || countdownExpired != lastExpired || (strcmp(currentText, lastText) != 0) || fontIndex != lastFontIndex || countdownTextSize != lastTextSizeTier;
 
   if (needRecalc) {
     const GFXfont *font = getFontByIndex(fontIndex);
@@ -711,8 +772,9 @@ void displayFullscreenCountdown(int days, int hours, int minutes, int seconds) {
     }
     int16_t x1, y1; uint16_t w, h;
     display.getTextBounds(currentText, 0, 0, &x1, &y1, &w, &h);
-    cachedTextPixelWidth = w; // conserver largeur
-    cachedY = (TOTAL_HEIGHT - h) / 2 - y1;
+  cachedTextPixelWidth = w; // conserver largeur
+  cachedY = (TOTAL_HEIGHT - h) / 2 - y1;
+  cachedFontXOffset = x1;
 
     // Décider activation selon le mode
     marqueeTextWidth = w;
@@ -739,13 +801,13 @@ void displayFullscreenCountdown(int days, int hours, int minutes, int seconds) {
       marqueeInPause = false;
       marqueePauseUntil = 0;
       if (marqueeMode == 2) { // bounce
-        // On démarre à offset 0 (texte aligné à gauche visible) puis direction vers la gauche => rapidement sortira et reviendra
-        marqueeOffset = 0;
+    // Démarre avec padding gauche
+    marqueeOffset = marqueeEdgePadding;
         marqueeDirection = -1;
         // pause initiale gauche
         if (marqueeBouncePauseLeftMs > 0) { marqueeInPause = true; marqueePauseUntil = millis() + marqueeBouncePauseLeftMs; }
       } else if (marqueeMode == 1 || marqueeMode == 0) {
-        marqueeOffset = TOTAL_WIDTH; // continuous depuis la droite
+    marqueeOffset = TOTAL_WIDTH + marqueeEdgePadding; // continuous depuis la droite + padding
       } else if (marqueeMode == 3) { // one-shot centré d'abord
         marqueeOneShotCenterPhase = true;
         marqueeOneShotStart = millis();
@@ -761,11 +823,14 @@ void displayFullscreenCountdown(int days, int hours, int minutes, int seconds) {
     if (!marqueeActive) {
       cachedX = (TOTAL_WIDTH - w) / 2 - x1;
     }
-    strncpy(lastText, currentText, sizeof(lastText));
+  // Conserver version pliée (marquee & mesure)
+  strncpy(lastText, currentText, sizeof(lastText)-1);
+  lastText[sizeof(lastText)-1] = '\0';
     lastExpired = countdownExpired;
     lastFontIndex = fontIndex;
     lastTextSizeTier = countdownTextSize;
     cachedIsEndMsg = countdownExpired;
+  forceLayout = false;
   } else {
     const GFXfont *font = getFontByIndex(fontIndex);
     display.setFont(font);
@@ -828,17 +893,17 @@ void displayFullscreenCountdown(int days, int hours, int minutes, int seconds) {
         lastMarqueeStep = nowMs;
         if (marqueeMode == 2) { // bounce
           marqueeOffset += marqueeDirection; // -1 gauche, +1 droite
-          int minX = TOTAL_WIDTH - marqueeTextWidth; // négatif
+          int minX = TOTAL_WIDTH - marqueeTextWidth - marqueeEdgePadding; // borne gauche avec padding
           if (marqueeOffset <= minX) { marqueeOffset = minX; marqueeDirection = 1; if (marqueeBouncePauseRightMs>0){ marqueeInPause=true; marqueePauseUntil=nowMs+marqueeBouncePauseRightMs; } marqueeCycleStartMs = nowMs; }
-          if (marqueeOffset >= 0) { marqueeOffset = 0; marqueeDirection = -1; if (marqueeBouncePauseLeftMs>0){ marqueeInPause=true; marqueePauseUntil=nowMs+marqueeBouncePauseLeftMs; } marqueeCycleStartMs = nowMs; }
+          if (marqueeOffset >= marqueeEdgePadding) { marqueeOffset = marqueeEdgePadding; marqueeDirection = -1; if (marqueeBouncePauseLeftMs>0){ marqueeInPause=true; marqueePauseUntil=nowMs+marqueeBouncePauseLeftMs; } marqueeCycleStartMs = nowMs; }
         } else if (marqueeMode == 3) { // one-shot scrolling phase
           if (!marqueeOneShotDone && !marqueeOneShotCenterPhase) {
             marqueeOffset--; // vers la gauche
             if (marqueeOffset + marqueeTextWidth < 0) {
               marqueeActive = false; marqueeOneShotDone = true;
               if (marqueeOneShotStopCenter) {
-                // recadrer
-                cachedX = (TOTAL_WIDTH - marqueeTextWidth) / 2;
+                // recadrer avec correction x1
+                cachedX = (TOTAL_WIDTH - marqueeTextWidth) / 2 - cachedFontXOffset;
               }
               if (marqueeOneShotRestartSec > 0) {
                 marqueeOneShotRestartAt = nowMs + (unsigned long)marqueeOneShotRestartSec * 1000UL;
@@ -849,7 +914,7 @@ void displayFullscreenCountdown(int days, int hours, int minutes, int seconds) {
           marqueeOffset--;
           int localGap = marqueeGap; if (localGap < 4) localGap = 4; if (localGap > 256) localGap = 256;
           if (marqueeOffset + marqueeTextWidth < 0) {
-            marqueeOffset = TOTAL_WIDTH + localGap; // boucle
+            marqueeOffset = TOTAL_WIDTH + localGap + marqueeEdgePadding; // boucle avec padding
             marqueeCycleStartMs = nowMs; // nouveau cycle -> reset accel
           }
         }
@@ -868,11 +933,10 @@ void displayFullscreenCountdown(int days, int hours, int minutes, int seconds) {
       display.print(lastText);
     } else if (marqueeMode == 3) { // one-shot
       if (marqueeOneShotCenterPhase) {
-        // déjà centré via cachedX/cachedY dans phase setup, mais on redessine centré
-        display.setCursor((TOTAL_WIDTH - marqueeTextWidth)/2, cachedY);
+        display.setCursor((TOTAL_WIDTH - marqueeTextWidth)/2 - cachedFontXOffset, cachedY);
         display.print(lastText);
       } else if (marqueeOneShotDone && marqueeOneShotStopCenter) {
-        display.setCursor((TOTAL_WIDTH - marqueeTextWidth)/2, cachedY);
+        display.setCursor((TOTAL_WIDTH - marqueeTextWidth)/2 - cachedFontXOffset, cachedY);
         display.print(lastText);
       } else {
         display.setCursor(marqueeOffset, cachedY);
@@ -1185,6 +1249,13 @@ void handleSyncTime() {
 void handleSettings() {
   Serial.println("\n-------------Settings");
 
+  // Désactiver temporairement le timer d'affichage pour éviter conflits ISR pendant mise à jour
+  bool displayTimerWasOn = (timer != nullptr);
+  if (displayTimerWasOn) {
+    Serial.println("[handleSettings] Pause display timer");
+    display_update_enable(false);
+  }
+
   // Récupérer les valeurs de la requête
   String title = server.hasArg("title") ? server.arg("title") : String("");
   String dateStr = server.hasArg("date") ? server.arg("date") : String("");
@@ -1228,16 +1299,19 @@ void handleSettings() {
   }
   if (server.hasArg("marqueeEnabled")) {
     marqueeEnabled = server.arg("marqueeEnabled").toInt() != 0;
+  forceLayout = true;
   }
   if (server.hasArg("marqueeInterval")) {
     int mi = server.arg("marqueeInterval").toInt();
     if (mi < 5) mi = 5; if (mi > 500) mi = 500;
     marqueeIntervalMs = mi;
+  forceLayout = true;
   }
   if (server.hasArg("marqueeGap")) {
     int mg = server.arg("marqueeGap").toInt();
     if (mg < 4) mg = 4; if (mg > 256) mg = 256;
     marqueeGap = mg;
+  forceLayout = true;
   }
   if (server.hasArg("marqueeMode")) {
     int mm = server.arg("marqueeMode").toInt();
@@ -1245,49 +1319,60 @@ void handleSettings() {
     marqueeMode = mm;
     // réinitialiser états spécifiques
     marqueeOneShotDone = false;
+  forceLayout = true;
   }
   if (server.hasArg("marqueeReturnInterval")) {
     int ri = server.arg("marqueeReturnInterval").toInt();
     if (ri < 5) ri = 5; if (ri > 500) ri = 500;
     marqueeReturnIntervalMs = ri;
+  forceLayout = true;
   }
   if (server.hasArg("marqueeBouncePauseLeft")) {
     int bpL = server.arg("marqueeBouncePauseLeft").toInt();
     if (bpL < 0) bpL = 0; if (bpL > 5000) bpL = 5000;
     marqueeBouncePauseLeftMs = bpL;
+  forceLayout = true;
   }
   if (server.hasArg("marqueeBouncePauseRight")) {
     int bpR = server.arg("marqueeBouncePauseRight").toInt();
     if (bpR < 0) bpR = 0; if (bpR > 5000) bpR = 5000;
     marqueeBouncePauseRightMs = bpR;
+  forceLayout = true;
   }
   if (server.hasArg("marqueeOneShotDelay")) {
     int od = server.arg("marqueeOneShotDelay").toInt();
     if (od < 0) od = 0; if (od > 10000) od = 10000;
     marqueeOneShotDelayMs = od;
+  forceLayout = true;
   }
   if (server.hasArg("marqueeOneShotStopCenter")) {
     marqueeOneShotStopCenter = server.arg("marqueeOneShotStopCenter") == "1";
+  forceLayout = true;
   }
   if (server.hasArg("marqueeOneShotRestart")) {
     int rs = server.arg("marqueeOneShotRestart").toInt();
     if (rs < 0) rs = 0; if (rs > 86400) rs = 86400;
     marqueeOneShotRestartSec = rs;
+  forceLayout = true;
   }
   if (server.hasArg("marqueeAccelEnabled")) {
     marqueeAccelEnabled = server.arg("marqueeAccelEnabled") == "1";
+  forceLayout = true;
   }
   if (server.hasArg("marqueeAccelStart")) {
     int as = server.arg("marqueeAccelStart").toInt();
     if (as < 5) as = 5; if (as > 500) as = 500; marqueeAccelStartIntervalMs = as;
+  forceLayout = true;
   }
   if (server.hasArg("marqueeAccelEnd")) {
     int ae = server.arg("marqueeAccelEnd").toInt();
     if (ae < 5) ae = 5; if (ae > 500) ae = 500; marqueeAccelEndIntervalMs = ae;
+  forceLayout = true;
   }
   if (server.hasArg("marqueeAccelDuration")) {
     int ad = server.arg("marqueeAccelDuration").toInt();
     if (ad < 50) ad = 50; if (ad > 600000) ad = 600000; marqueeAccelDurationMs = ad;
+  forceLayout = true;
   }
   if (server.hasArg("brightness")) {
     int b = server.arg("brightness").toInt();
@@ -1362,6 +1447,14 @@ void handleSettings() {
   // Répondre avec une redirection vers la page principale
   server.sendHeader("Location", "/", true);
   server.send(302, "text/plain", "");
+
+  // Réactiver timer si nécessaire
+  if (displayTimerWasOn) {
+    Serial.println("[handleSettings] Resume display timer");
+    display_update_enable(true);
+    // Forcer un redraw complet
+    forceLayout = true;
+  }
 }
 
 // Gestionnaire de reset
@@ -1608,14 +1701,17 @@ void DisplayTask(void * parameter) {
         xSemaphoreGive(countdownMutex);
       }
       bool secondChanged = (seconds != prevSeconds) || (minutes != prevMinutes) || (hours != prevHours) || (days != prevDays);
-      bool needDraw = secondChanged || blinkLastSeconds || countdownExpired != prevExpired;
+      bool needDraw = secondChanged || blinkLastSeconds || countdownExpired != prevExpired || marqueeActive;
       if (needDraw) {
         displayFullscreenCountdown(days, hours, minutes, seconds);
         prevSeconds = seconds; prevMinutes = minutes; prevHours = hours; prevDays = days; prevExpired = countdownExpired;
       }
       xSemaphoreGive(displayMutex);
     }
-    vTaskDelay(pdMS_TO_TICKS(blinkLastSeconds ? 50 : 150)); // Moins de rafraîchissements hors clignotement
+    // Fréquence un peu plus élevée si marquee actif pour fluidité, sinon économe
+    uint32_t baseDelay = marqueeActive ? 40 : 150;
+    if (blinkLastSeconds && baseDelay > 50) baseDelay = 50;
+    vTaskDelay(pdMS_TO_TICKS(baseDelay));
   }
 }
 
