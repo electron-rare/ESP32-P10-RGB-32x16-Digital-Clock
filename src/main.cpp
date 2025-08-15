@@ -49,6 +49,9 @@ static inline bool isFastBoot(){
 #include <freertos/task.h>
 #include <driver/timer.h>
 
+// Version firmware globale
+static const char* FIRMWARE_VERSION = "1.0.0"; // Modifier ici lors d'une nouvelle release
+
 // Prototypes des tâches FreeRTOS
 void DisplayTask(void *pvParameters);
 void WebServerTask(void *pvParameters);
@@ -57,6 +60,7 @@ void WiFiTask(void *pvParameters);
 // Prototypes des gestionnaires web
 void handleRoot();
 void handleSettings();
+void handleAbout();
 void handleCaptivePortal();
 void handleNotFound();
 
@@ -481,6 +485,11 @@ void handleRoot() {
   server.send(200, "text/html", MAIN_page);
 }
 
+// Page À propos
+void handleAbout(){
+  server.send(200, "text/html", ABOUT_page);
+}
+
 // Gestionnaire des paramètres
 void handleSettings() {
   String incoming_Settings = server.arg("key");
@@ -759,6 +768,7 @@ void prepare_and_start_The_Server() {
   // Routes principales
   server.on("/", handleRoot);
   server.on("/settings", handleSettings);
+  server.on("/about", handleAbout);
   
   // Routes communes pour le portail captif
   server.on("/generate_204", handleRoot);  // Android
@@ -795,7 +805,10 @@ void setup() {
   delay(isFastBoot() ? 100 : 1000);
   Serial.begin(115200);
   Serial.println("\n=== ESP32 P10 RGB Digital Clock ===");
-  Serial.println("Version: PlatformIO Compatible with Cascade Support");
+  Serial.print("Version: PlatformIO Compatible with Cascade Support - v");
+  Serial.println(FIRMWARE_VERSION);
+  Serial.println("Author: Clément Saillant (electron-rare) - https://github.com/electron-rare");
+  Serial.println("License: MIT");
   
   // Affichage de la configuration des panneaux
   Serial.println("\n--- Configuration Panneaux ---");

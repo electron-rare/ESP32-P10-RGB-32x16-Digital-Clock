@@ -9,7 +9,7 @@
  * 
  * L'interface web est accessible à l'adresse http://ip_de_l'esp32/
  * 
- * Auteur: GitHub Copilot
+ * Auteur: Clément Saillant (electron-rare)
  * Date: Août 2025
  */
 
@@ -47,6 +47,13 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
+
+// Version firmware (uniformisé avec main)
+static const char* FIRMWARE_VERSION = "1.0.0"; // garder synchro avec src/main.cpp
+
+// === Personnalisation Auteur / GitHub ===
+static const char* AUTHOR_NAME = "Clément Saillant (electron-rare)"; 
+static const char* GITHUB_URL = "https://github.com/electron-rare";   
 
 // Pins pour la matrice LED
 #define P_LAT 5
@@ -383,6 +390,7 @@ int displayFormat = 0;
 const char MAIN_page[] PROGMEM = R"rawliteral(
 <!DOCTYPE html><html lang="fr"><head>
 <meta charset="utf-8" />
+<meta name="author" content="__AUTHOR_NAME__">
 <title>ESP32 P10 Countdown</title>
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <style>
@@ -447,7 +455,7 @@ footer { margin:40px 0 10px; text-align:center; font-size:.6rem; letter-spacing:
     </div>
   </div>
   <div class="card" id="formCard">
-    <h1>Configuration du Compte à Rebours</h1>
+  <h1>Configuration du Compte à Rebours <span id="fwVer" style="font-size:.55rem;opacity:.6;vertical-align:middle;"></span></h1>
     <form action="/settings" method="POST" id="settingsForm" autocomplete="off">
       <div class="grid" style="gap:18px;">
         <div class="field">
@@ -598,7 +606,7 @@ footer { margin:40px 0 10px; text-align:center; font-size:.6rem; letter-spacing:
       <div class="inline-note">Les modifications sont appliquées immédiatement sur l'afficheur après envoi.</div>
     </form>
   </div>
-  <footer>ESP32 P10 RGB Fullscreen Countdown • 2025</footer>
+  <footer>ESP32 P10 RGB Fullscreen Countdown • 2025 • __AUTHOR_NAME__ (<a href="__GITHUB_URL__" style="color:#4caf50" target="_blank" rel="noopener">GitHub</a>) • <a href="/about" style="color:#888">À propos</a></footer>
 </div>
 <div class="toast" id="toast"></div>
 <script>
@@ -678,6 +686,8 @@ form.addEventListener('submit',()=>{ setSaving(true,'ENVOI...'); el('btnSave').d
 
 // Chargement initial depuis l'ESP32
 window.addEventListener('load',()=>{
+  // Injecter version firmware (fourni côté C++ via endpoint futur ou placeholder compilé)
+  document.getElementById('fwVer').textContent = 'v__FWVER__';
   const now=new Date(); const tomorrow=new Date(now.getTime()+86400000); el('date').value=tomorrow.toISOString().split('T')[0]; el('time').value='23:59:59';
   fetch('/getSettings').then(r=>r.json()).then(d=>{ el('title').value=d.title; const ds=`${d.year}-${String(d.month).padStart(2,'0')}-${String(d.day).padStart(2,'0')}`; el('date').value=ds; const ts=`${String(d.hour).padStart(2,'0')}:${String(d.minute).padStart(2,'0')}:${String(d.second).padStart(2,'0')}`; el('time').value=ts; el('fontIndex').value=d.fontIndex; el('textSize').value=d.textSize; if(d.blinkEnabled!==undefined){ el('blinkEnabled').value = d.blinkEnabled ? '1' : '0'; } if(d.blinkIntervalMs!==undefined){ el('blinkInterval').value = d.blinkIntervalMs; } if(d.blinkWindow!==undefined){ el('blinkWindow').value = d.blinkWindow; } if(d.marqueeEnabled!==undefined){ el('marqueeEnabled').value = d.marqueeEnabled ? '1':'0'; } if(d.marqueeIntervalMs!==undefined){ el('marqueeInterval').value = d.marqueeIntervalMs; } if(d.marqueeGap!==undefined){ el('marqueeGap').value = d.marqueeGap; } if(d.marqueeMode!==undefined){ el('marqueeMode').value = d.marqueeMode; } if(d.marqueeReturnIntervalMs!==undefined){ el('marqueeReturnInterval').value = d.marqueeReturnIntervalMs; } if(d.marqueeBouncePauseLeftMs!==undefined){ el('marqueeBouncePauseLeft').value = d.marqueeBouncePauseLeftMs; } if(d.marqueeBouncePauseRightMs!==undefined){ el('marqueeBouncePauseRight').value = d.marqueeBouncePauseRightMs; } if(d.marqueeOneShotDelayMs!==undefined){ el('marqueeOneShotDelay').value = d.marqueeOneShotDelayMs; } if(d.marqueeOneShotStopCenter!==undefined){ el('marqueeOneShotStopCenter').value = d.marqueeOneShotStopCenter? '1':'0'; } if(d.marqueeOneShotRestartSec!==undefined){ el('marqueeOneShotRestart').value = d.marqueeOneShotRestartSec; } if(d.marqueeAccelEnabled!==undefined){ el('marqueeAccelEnabled').value = d.marqueeAccelEnabled? '1':'0'; } if(d.marqueeAccelStartIntervalMs!==undefined){ el('marqueeAccelStart').value = d.marqueeAccelStartIntervalMs; } if(d.marqueeAccelEndIntervalMs!==undefined){ el('marqueeAccelEnd').value = d.marqueeAccelEndIntervalMs; } if(d.marqueeAccelDurationMs!==undefined){ el('marqueeAccelDuration').value = d.marqueeAccelDurationMs; } if(d.brightness!==undefined){ if(parseInt(d.brightness,10)===-1){ el('brightnessMode').value='auto'; el('brightnessHidden').value='-1'; } else { el('brightnessMode').value='manual'; el('brightness').value=d.brightness; el('brightnessHidden').value=d.brightness; } } const color=rgbToHex(d.colorR,d.colorG,d.colorB); el('colorPicker').value=color; updateColor(color); syncFieldsToPreview(); setSaving(false,'PRÊT'); showToast('Paramètres chargés'); }).catch(()=>{ showToast('Échec chargement paramètres',false); setSaving(false,'HORS LIGNE'); syncFieldsToPreview(); });
 });
@@ -1255,7 +1265,11 @@ void set_ESP32_Access_Point() {
 
 // Gestionnaire de la page principale
 void handleRoot() {
-  server.send(200, "text/html", MAIN_page);
+  String page = MAIN_page;
+  page.replace("v__FWVER__", String(FIRMWARE_VERSION));
+  page.replace("__AUTHOR_NAME__", String(AUTHOR_NAME));
+  page.replace("__GITHUB_URL__", String(GITHUB_URL));
+  server.send(200, "text/html", page);
 }
 
 // Gestionnaire des paramètres actuels en JSON

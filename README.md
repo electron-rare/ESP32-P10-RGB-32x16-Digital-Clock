@@ -333,10 +333,17 @@ Pour obtenir de l'aide :
 
 ## Crédit
 
-Projet original adapté pour PlatformIO. Code source basé sur les exemples et tutoriels de la communauté ESP32/Arduino.
+Projet développé et adapté pour PlatformIO par **Clément Saillant (electron-rare)** :
+- GitHub : https://github.com/electron-rare
+
+Code source basé sur des exemples et tutoriels de la communauté ESP32/Arduino.
 
 Bibliothèques utilisées :
 - PxMatrix par 2dom (Dominic Buchstaller)
 - RTClib par Adafruit
 - Adafruit GFX Library
 - Adafruit BusIO
+
+## Licence
+
+Ce projet est distribué sous licence **MIT**. Voir le fichier `LICENSE` pour le texte complet.
