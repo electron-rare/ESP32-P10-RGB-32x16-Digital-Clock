@@ -18,6 +18,22 @@
 // Defines pour la fréquence SPI (réduire si du bruit apparaît sur l'affichage)
 #define PxMATRIX_SPI_FREQUENCY 10000000
 
+// ============================================================================
+// MODE DEMARRAGE RAPIDE (activer avec -DFAST_BOOT dans platformio.ini)
+// Réduit les delays, saute les tests couleurs/bordures et raccourcit la tentative WiFi
+// ============================================================================
+#ifdef FAST_BOOT
+  #pragma message ("FAST_BOOT activé : séquence de démarrage optimisée")
+#endif
+
+static inline bool isFastBoot(){
+#ifdef FAST_BOOT
+  return true;
+#else
+  return false;
+#endif
+}
+
 // Inclusion des bibliothèques
 #include <Arduino.h>
 #include <stdint.h>
@@ -205,7 +221,7 @@ void display_update_enable(bool is_enable) {
 }
 
 // Connexion WiFi
-void connecting_To_WiFi() {
+void connecting_To_WiFi(bool fastBoot) {
   Serial.println("\n-------------WIFI mode");
   Serial.println("WIFI mode : STA");
   WiFi.mode(WIFI_STA);
@@ -217,7 +233,7 @@ void connecting_To_WiFi() {
   Serial.println(ssid);
   WiFi.begin(ssid, password);
   
-  int connecting_process_timed_out = 40; // 20 secondes timeout
+  int connecting_process_timed_out = fastBoot ? 10 : 40; // 5s en fast boot, 20s normal
   while (WiFi.status() != WL_CONNECTED) {
     Serial.print(".");
     delay(500);
@@ -768,7 +784,8 @@ void prepare_and_start_The_Server() {
 }
 
 void setup() {
-  delay(1000);
+  // Délai réduit (1s -> 100ms) si FAST_BOOT
+  delay(isFastBoot() ? 100 : 1000);
   Serial.begin(115200);
   Serial.println("\n=== ESP32 P10 RGB Digital Clock ===");
   Serial.println("Version: PlatformIO Compatible with Cascade Support");
@@ -816,7 +833,7 @@ void setup() {
   Serial.println("------------");
 
   // Initialisation de l'affichage
-    // Initialisation de l'affichage avec configuration P10 optimisée
+  // Initialisation de l'affichage avec configuration P10 optimisée
   display.begin(4); // 1/8 scan pour P10
   display.setScanPattern(ZAGZIG);
   display.setMuxPattern(BINARY); 
@@ -826,7 +843,7 @@ void setup() {
 
   // NE PAS activer le timer ici - attendre après le WiFi
   display.clearDisplay();
-  delay(500);
+  if(!isFastBoot()) delay(500); else delay(50);
 
   // Chargement des paramètres
   loadSettings();
@@ -838,7 +855,7 @@ void setup() {
   Serial.println("Testing display colors...");
   
   // Test de bordures pour vérifier l'alignement (panneaux multiples)
-  if (MATRIX_PANELS_X > 1 || MATRIX_PANELS_Y > 1) {
+  if (!isFastBoot() && (MATRIX_PANELS_X > 1 || MATRIX_PANELS_Y > 1)) {
     Serial.println("Testing panel alignment...");
     
     // Bordure extérieure
@@ -859,14 +876,12 @@ void setup() {
   }
   
   // Test des couleurs - mode manuel (sans timer)
-  display.fillScreen(myRED);
-  delay(1000);
-  display.fillScreen(myGREEN);
-  delay(1000);
-  display.fillScreen(myBLUE);
-  delay(1000);
-  display.fillScreen(myWHITE);
-  delay(1000);
+  if(!isFastBoot()){
+    display.fillScreen(myRED);   delay(400);
+    display.fillScreen(myGREEN); delay(400);
+    display.fillScreen(myBLUE);  delay(400);
+    display.fillScreen(myWHITE); delay(400);
+  }
 
   display.clearDisplay();
   delay(500);
@@ -899,12 +914,12 @@ void setup() {
     display.print("READY");
   }
   
-  delay(3000);
+  if(!isFastBoot()) delay(3000); else delay(500);
   display.clearDisplay();
 
   // Configuration WiFi
   if (useStationMode) {
-    connecting_To_WiFi();
+    connecting_To_WiFi(isFastBoot());
     if (!useStationMode) {
       set_ESP32_Access_Point();
     }
