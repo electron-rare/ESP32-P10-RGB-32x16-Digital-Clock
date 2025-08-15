@@ -15,6 +15,21 @@
 
 #define PxMATRIX_SPI_FREQUENCY 10000000
 
+// Option d'optimisation démarrage : définir FAST_BOOT pour réduire fortement les délais init
+#ifndef FAST_BOOT
+#define FAST_BOOT 1
+#endif
+
+#if FAST_BOOT
+#define BOOT_DELAY(ms) ((void)0)
+#define BOOT_SPLASH_MS 300   // durée splash réduite
+#define WIFI_STEP_DELAY(ms) vTaskDelay(pdMS_TO_TICKS(5))
+#else
+#define BOOT_DELAY(ms) delay(ms)
+#define BOOT_SPLASH_MS 2000
+#define WIFI_STEP_DELAY(ms) delay(ms)
+#endif
+
 #include <Arduino.h>
 #include <PxMatrix.h>
 #include <RTClib.h>
@@ -106,11 +121,9 @@ const char* password = "YOUR_WIFI_PASSWORD";
 // DNS pour le portail captif
 const byte DNS_PORT = 53;
 DNSServer dnsServer;
-const char* ap_ssid = "ESP32_Countdown";
-const char* ap_password = "countdown123";
+const char* ap_ssid = "HOKA_CLOCK";
+const char* ap_password = "hokahoka";
 
-// Clé de sécurité pour l'interface web
-#define KEY_TXT "countdown2025"
 
 // Mode de fonctionnement WiFi
 bool useStationMode = false; // true = se connecter au WiFi, false = créer un point d'accès
@@ -174,9 +187,8 @@ size_t utf8SafeCopyTruncate(const String &src, char *dest, size_t destSize, size
 
 // Prototypes des tâches
 void DisplayTask(void * parameter);
-void WebServerTask(void * parameter);
 void CountdownTask(void * parameter);
-void NetworkTask(void * parameter);
+void NetWebTask(void * parameter);
 
 // Variables pour le countdown
 DateTime countdownTarget;
@@ -470,6 +482,8 @@ void updateCountdown(int &days, int &hours, int &minutes, int &seconds) {
   // Vérifier si le countdown est expiré
   if (now >= countdownTarget) {
     countdownExpired = true;
+  // Arrêter tout clignotement résiduel une fois expiré
+  blinkLastSeconds = false;
     days = hours = minutes = 0;
     seconds = 0;
     return;
@@ -537,124 +551,86 @@ const GFXfont* getFontByIndex(int index) {
 
 // Affichage du compte à rebours en plein écran
 void displayFullscreenCountdown(int days, int hours, int minutes, int seconds) {
-  // Protection contre concurrence avec l'ISR d'affichage
-  portENTER_CRITICAL(&timerMux);
-  display.clearDisplay();
+  // --- Cache layout ---
+  static char lastText[24] = "";
+  static bool lastExpired = false;
+  static int lastFontIndex = -1;
+  static int lastTextSizeTier = -1;
+  static int16_t cachedX = 0, cachedY = 0;
+  static uint8_t cachedSetSize = 1;
+  static bool cachedIsEndMsg = false;
 
-  // Choisir la couleur
+  // Choisir la couleur (adaptée clignotement)
   uint16_t displayColor = countdownColor;
-
-  // Si on est dans les 10 dernières secondes et qu'il faut clignoter
   if (blinkLastSeconds) {
     unsigned long currentTime = millis();
     if (currentTime - lastBlinkTime >= BLINK_INTERVAL) {
       lastBlinkTime = currentTime;
       blinkState = !blinkState;
     }
-    if (!blinkState) {
-      displayColor = myBLACK;
-    } else {
-      displayColor = myRED;
+    // Clignote maintenant entre la couleur choisie et noir (plus de rouge forcé)
+    displayColor = blinkState ? countdownColor : myBLACK;
+  }
+
+  // Préparer le texte cible
+  char currentText[24];
+  if (countdownExpired) {
+    strncpy(currentText, countdownTitle, sizeof(currentText)-1);
+    currentText[sizeof(currentText)-1] = '\0';
+  } else {
+    switch (displayFormat) {
+      case 0:  snprintf(currentText, sizeof(currentText), "%dd %02d:%02d", days, hours, minutes); break;
+      case 1:  snprintf(currentText, sizeof(currentText), "%02d:%02d:%02d", hours, minutes, seconds); break;
+      case 2:  snprintf(currentText, sizeof(currentText), "%02d:%02d", minutes, seconds); break;
+      default: snprintf(currentText, sizeof(currentText), "%02d", seconds); break;
     }
   }
 
-  // Si le countdown est expiré
-  if (countdownExpired) {
+  bool needRecalc = countdownExpired != lastExpired || (strcmp(currentText, lastText) != 0) || fontIndex != lastFontIndex || countdownTextSize != lastTextSizeTier;
+
+  if (needRecalc) {
     const GFXfont *font = getFontByIndex(fontIndex);
-    display.setFont(font); // peut être NULL => police par défaut
-    // Calcul largeur avec police choisie
-    const char* endMsg = countdownTitle;
-    int maxFittingSize = 1;
-    // Pour police par défaut seulement on applique TextSize scaling; pour GFX font on garde size=1
+    display.setFont(font);
     if (!font) {
+      int maxFittingSize = 1;
       for (int s = 1; s <= 5; s++) {
         display.setTextSize(s);
-        int w = getTextWidth(endMsg, font);
+        int w = getTextWidth(currentText, font);
         int h = 8 * s;
-        if (w < TOTAL_WIDTH && h < TOTAL_HEIGHT) maxFittingSize = s;
+        if (w < TOTAL_WIDTH && h < TOTAL_HEIGHT) maxFittingSize = s; else break;
       }
-      // Adapter selon préférence utilisateur (countdownTextSize 1..3)
-      int desiredTier = countdownTextSize; // 1 petit, 2 moyen, 3 grand
-      int chosen = maxFittingSize; // base grand
-      if (desiredTier == 1) {
-        chosen = max(1, maxFittingSize - 2);
-      } else if (desiredTier == 2) {
-        chosen = max(1, maxFittingSize - 1);
-      }
+      int desiredTier = countdownTextSize;
+      int chosen = maxFittingSize;
+      if (desiredTier == 1) chosen = max(1, maxFittingSize - 2);
+      else if (desiredTier == 2) chosen = max(1, maxFittingSize - 1);
       display.setTextSize(chosen);
-  // Calcul précis via getTextBounds
-  int16_t x1, y1; uint16_t w, h;
-  display.getTextBounds(endMsg, 0, 0, &x1, &y1, &w, &h);
-  int textX = (TOTAL_WIDTH - w) / 2 - x1;
-  int textY = (TOTAL_HEIGHT - h) / 2 - y1; // y1 souvent négatif
-  display.setCursor(textX, textY);
+      cachedSetSize = chosen;
     } else {
-      // GFX font: pas de variation de setTextSize fiable -> centrer simplement
       display.setTextSize(1);
-  int16_t x1, y1; uint16_t w, h;
-  display.getTextBounds(endMsg, 0, 0, &x1, &y1, &w, &h);
-  int16_t textX = (TOTAL_WIDTH - w) / 2 - x1;
-  int16_t textY = (TOTAL_HEIGHT - h) / 2 - y1;
-  display.setCursor(textX, textY);
+      cachedSetSize = 1;
     }
-    display.setTextColor(myRED);
-    display.print(endMsg);
-    portEXIT_CRITICAL(&timerMux);
-    return;
-  }
-
-  char countdownText[20];
-  int16_t textWidth, textX, textY;
-  int maxSize = 1;
-
-  // Déterminer le texte à afficher
-  switch (displayFormat) {
-    case 0:
-      sprintf(countdownText, "%dd %02d:%02d", days, hours, minutes);
-      break;
-    case 1:
-      sprintf(countdownText, "%02d:%02d:%02d", hours, minutes, seconds);
-      break;
-    case 2:
-      sprintf(countdownText, "%02d:%02d", minutes, seconds);
-      break;
-    case 3:
-      sprintf(countdownText, "%02d", seconds);
-      break;
-  }
-
-  const GFXfont *font = getFontByIndex(fontIndex);
-  display.setFont(font);
-  // Déterminer taille maximale (seulement pour police par défaut)
-  int maxFittingSize = 1;
-  if (!font) {
-    for (int s = 1; s <= 5; s++) {
-      display.setTextSize(s);
-      int w = getTextWidth(countdownText, font);
-      int h = 8 * s;
-      if (w < TOTAL_WIDTH && h < TOTAL_HEIGHT) maxFittingSize = s;
-    }
-    int desiredTier = countdownTextSize; // 1..3
-    int chosen = maxFittingSize;
-    if (desiredTier == 1) chosen = max(1, maxFittingSize - 2);
-    else if (desiredTier == 2) chosen = max(1, maxFittingSize - 1);
-    display.setTextSize(chosen);
-  int16_t x1, y1; uint16_t w, h;
-  display.getTextBounds(countdownText, 0, 0, &x1, &y1, &w, &h);
-  textX = (TOTAL_WIDTH - w) / 2 - x1;
-  textY = (TOTAL_HEIGHT - h) / 2 - y1;
+    int16_t x1, y1; uint16_t w, h;
+    display.getTextBounds(currentText, 0, 0, &x1, &y1, &w, &h);
+    cachedX = (TOTAL_WIDTH - w) / 2 - x1;
+    cachedY = (TOTAL_HEIGHT - h) / 2 - y1;
+    strncpy(lastText, currentText, sizeof(lastText));
+    lastExpired = countdownExpired;
+    lastFontIndex = fontIndex;
+    lastTextSizeTier = countdownTextSize;
+    cachedIsEndMsg = countdownExpired;
   } else {
-    display.setTextSize(1); // scaling custom font souvent ignoré
-  int16_t x1, y1; uint16_t w, h;
-  display.getTextBounds(countdownText, 0, 0, &x1, &y1, &w, &h);
-  textX = (TOTAL_WIDTH - w) / 2 - x1;
-  textY = (TOTAL_HEIGHT - h) / 2 - y1;
+    const GFXfont *font = getFontByIndex(fontIndex);
+    display.setFont(font);
+    display.setTextSize(cachedSetSize);
   }
-  display.setTextColor(displayColor);
-  display.setCursor(textX, textY);
-  display.print(countdownText);
 
-  // Le titre n'est plus affiché pendant le compte à rebours
+  // Section critique minimale : effacement + écriture tampon (réduit blocage ISR)
+  portENTER_CRITICAL(&timerMux);
+  display.clearDisplay();
+  // Utiliser toujours la couleur choisie (ou clignotement) même pour le texte final
+  display.setTextColor(displayColor);
+  display.setCursor(cachedX, cachedY);
+  display.print(lastText);
   portEXIT_CRITICAL(&timerMux);
 }
 
@@ -782,35 +758,25 @@ void saveSettings() {
 
 // Connexion WiFi
 void connecting_To_WiFi() {
-  Serial.println("\n-------------WIFI mode");
-  Serial.println("WIFI mode : STA");
+  Serial.println("\n-------------WIFI mode (STA async)");
   WiFi.mode(WIFI_STA);
-  Serial.println("-------------");
-  delay(1000);
-
-  Serial.println("\n-------------Connection");
-  Serial.print("Connecting to ");
-  Serial.println(ssid);
+  WiFi.persistent(false); // éviter écritures flash lentes
+  WiFi.setAutoReconnect(true);
   WiFi.begin(ssid, password);
-  
-  int connecting_process_timed_out = 40; // 20 secondes timeout
-  while (WiFi.status() != WL_CONNECTED) {
-    Serial.print(".");
-    delay(500);
-    if(connecting_process_timed_out > 0) connecting_process_timed_out--;
-    if(connecting_process_timed_out == 0) {
-      Serial.println("\nFailed to connect to WiFi. Switching to AP mode.");
-      useStationMode = false;
-      break;
-    }
+  uint32_t startAttempt = millis();
+  const uint32_t timeoutMs = 8000; // timeout réduit
+  while (WiFi.status() != WL_CONNECTED && (millis() - startAttempt) < timeoutMs) {
+    WIFI_STEP_DELAY(50);
+    Serial.print('.');
+    // Donner du temps au scheduler (éviter WDT)
+    yield();
   }
-  
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nWiFi connected");
-    Serial.print("Successfully connected to : ");
-    Serial.println(ssid);
-    Serial.print("IP address : ");
-    Serial.println(WiFi.localIP());
+    Serial.printf("\nWiFi connected in %lu ms\n", (unsigned long)(millis() - startAttempt));
+    Serial.print("IP: "); Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("\nWiFi connect timeout -> fallback AP");
+    useStationMode = false;
   }
   Serial.println("-------------");
 }
@@ -821,24 +787,15 @@ void set_ESP32_Access_Point() {
   Serial.println("WIFI mode : AP");
   WiFi.mode(WIFI_AP);
   Serial.println("-------------");
-  delay(1000);
 
-  Serial.println("\n-------------");
-  Serial.println("Setting up ESP32 to be an Access Point.");
+  Serial.println("Configuring Access Point...");
   WiFi.softAP(ap_ssid, ap_password);
-  delay(1000);
-  
   IPAddress local_ip(192, 168, 1, 1);
   IPAddress gateway(192, 168, 1, 1);
   IPAddress subnet(255, 255, 255, 0);
-  
   WiFi.softAPConfig(local_ip, gateway, subnet);
-  Serial.println("-------------");
-  Serial.print("SSID name : ");
-  Serial.println(ap_ssid);
-  Serial.print("IP address : ");
-  Serial.println(WiFi.softAPIP());
-  delay(1000);
+  Serial.print("SSID : "); Serial.println(ap_ssid);
+  Serial.print("AP IP : "); Serial.println(WiFi.softAPIP());
 }
 
 // Gestionnaire de la page principale
@@ -986,36 +943,19 @@ void handleReset() {
 
 // Configuration et démarrage du serveur
 void prepare_and_start_The_Server() {
-  // Démarrage du serveur DNS pour le portail captif
   dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
   server.on("/", handleRoot);
   server.on("/settings", HTTP_POST, handleSettings);
   server.on("/getSettings", handleGetSettings);
   server.on("/reset", HTTP_POST, handleReset);
-  // Rediriger toutes les autres requêtes HTTP vers la page principale (portail captif)
-  server.onNotFound([]() {
-    server.sendHeader("Location", "/", true);
-    server.send(302, "text/plain", "");
-  });
-  delay(500);
-
+  server.onNotFound([]() { server.sendHeader("Location", "/", true); server.send(302, "text/plain", ""); });
   server.begin();
-  Serial.println("\nHTTP server started");
-  
+  Serial.println("HTTP server started (fast)");
   if (useStationMode) {
-    Serial.print("Open http://");
-    Serial.print(WiFi.localIP());
-    Serial.println(" in your browser");
+    Serial.print("URL: http://"); Serial.println(WiFi.localIP());
   } else {
-    Serial.print("Connect to WiFi network: ");
-    Serial.println(ap_ssid);
-    Serial.print("Then open http://");
-    Serial.print(WiFi.softAPIP());
-    Serial.println(" in your browser");
+    Serial.print("AP URL: http://"); Serial.println(WiFi.softAPIP());
   }
-  
-  Serial.println("Use key: " KEY_TXT);
-  delay(500);
 }
 
 // Fonction de callback pour le timer d'affichage
@@ -1053,7 +993,8 @@ void display_update_enable(bool is_enable) {
 }
 
 void setup() {
-  delay(1000);
+  // Éviter grosse pause initiale; laisser hardware se stabiliser rapidement
+  BOOT_DELAY(100);
   Serial.begin(115200);
   Serial.println("\n=== ESP32 P10 RGB FULLSCREEN COUNTDOWN ===");
   Serial.printf("Configuration: %dx%d panels (%dx%d total resolution)\n", 
@@ -1085,7 +1026,7 @@ void setup() {
   display.setMuxPattern(BINARY); 
   const int muxdelay = 10; // Délai de multiplexage
   display.setMuxDelay(muxdelay, muxdelay, muxdelay, muxdelay, muxdelay);
-  delay(100);
+  BOOT_DELAY(20);
   
   // Luminosité adaptée au nombre de panneaux
   int brightness = 150;
@@ -1102,17 +1043,15 @@ void setup() {
   // Chargement des paramètres
   loadSettings();
   
-  // Message de démarrage
+  // Splash écran réduit
   display.clearDisplay();
   display.setTextColor(countdownColor);
   display.setTextSize(1);
   display.setCursor(0, 0);
-  display.print("COUNTDOWN");
-  
+  display.print("BOOT");
   display.setCursor(0, 8);
-  display.print("INTERFACE WEB");
-  
-  delay(2000);
+  display.print("COUNTDOWN");
+  BOOT_DELAY(BOOT_SPLASH_MS);
   display.clearDisplay();
   
   // Configuration WiFi initiale
@@ -1128,7 +1067,7 @@ void setup() {
   // Démarrage du serveur web
   prepare_and_start_The_Server();
   
-  Serial.println("Creating FreeRTOS tasks...");
+  Serial.println("Creating FreeRTOS tasks (fast boot)...");
   
   // Création des tâches FreeRTOS avec une meilleure distribution
   BaseType_t result;
@@ -1145,28 +1084,17 @@ void setup() {
   );
   if (result != pdPASS) Serial.println("Failed to create Display task");
   
-  // Tâches réseau sur le Core 0 (avec le WiFi)
+  // Tâche combinée réseau + serveur web Core 0
   result = xTaskCreatePinnedToCore(
-    NetworkTask,
-    "NetworkTask", 
+    NetWebTask,
+    "NetWebTask",
     TASK_NETWORK_STACK,
     NULL,
     TASK_NETWORK_PRIORITY,
     &networkTaskHandle,
-    0  // Core 0
+    0
   );
-  if (result != pdPASS) Serial.println("Failed to create Network task");
-  
-  result = xTaskCreatePinnedToCore(
-    WebServerTask,
-    "WebServerTask",
-    TASK_WEBSERVER_STACK,
-    NULL,
-    TASK_WEBSERVER_PRIORITY,
-    &webServerTaskHandle,
-    0  // Core 0
-  );
-  if (result != pdPASS) Serial.println("Failed to create WebServer task");
+  if (result != pdPASS) Serial.println("Failed to create NetWeb task");
   
   // Tâche de calcul sur le Core 0
   result = xTaskCreatePinnedToCore(
@@ -1184,9 +1112,9 @@ void setup() {
   Serial.println("Starting fullscreen countdown...");
   
   // ACTIVATION DU TIMER D'AFFICHAGE EN DERNIÈRE ÉTAPE
-  Serial.println("Activating display timer...");
+  Serial.println("Activating display timer earlier...");
   display_update_enable(true);
-  delay(200); // Attendre que le timer soit stable
+  BOOT_DELAY(50); // Stabilisation rapide
 }
 
 // Tâche d'affichage
@@ -1219,16 +1147,23 @@ void DisplayTask(void * parameter) {
   }
 }
 
-// Tâche du serveur web
-void WebServerTask(void * parameter) {
-  // Attendre que le WiFi soit configuré
-  vTaskDelay(pdMS_TO_TICKS(2000));
-  
-  Serial.println("WebServer task started on core " + String(xPortGetCoreID()));
-  
+// Tâche combinée réseau + web
+void NetWebTask(void * parameter) {
+  vTaskDelay(pdMS_TO_TICKS(1200));
+  Serial.println("NetWeb task started on core " + String(xPortGetCoreID()));
+  uint32_t lastReconnectCheck = 0;
   for(;;) {
+    dnsServer.processNextRequest();
     server.handleClient();
-    vTaskDelay(pdMS_TO_TICKS(1)); // Délai minimal
+    if (useStationMode) {
+      uint32_t now = millis();
+      if (WiFi.status() != WL_CONNECTED && now - lastReconnectCheck > 5000) {
+        lastReconnectCheck = now;
+        Serial.println("[NetWeb] WiFi lost -> reconnect");
+        WiFi.reconnect();
+      }
+    }
+    vTaskDelay(pdMS_TO_TICKS(5));
   }
 }
 
@@ -1264,28 +1199,7 @@ void CountdownTask(void * parameter) {
   }
 }
 
-// Tâche de gestion réseau
-void NetworkTask(void * parameter) {
-  // Attendre que le système soit stabilisé
-  vTaskDelay(pdMS_TO_TICKS(500));
-  
-  Serial.println("Network task started on core " + String(xPortGetCoreID()));
-  
-  for(;;) {
-    dnsServer.processNextRequest();
-    
-    // Vérification et gestion de la connexion WiFi
-    if(useStationMode) {
-      if(WiFi.status() != WL_CONNECTED) {
-        Serial.println("WiFi connection lost, trying to reconnect...");
-        WiFi.reconnect();
-        vTaskDelay(pdMS_TO_TICKS(5000)); // Attendre 5 secondes avant la prochaine tentative
-      }
-    }
-    
-    vTaskDelay(pdMS_TO_TICKS(50));
-  }
-}
+// Ancienne NetworkTask fusionnée dans NetWebTask
 
 void loop() {
   // Pause pour éviter les problèmes de watchdog

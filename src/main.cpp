@@ -67,12 +67,19 @@ void handleNotFound();
 #define P_C   18
 #define P_OE  4
 
-// Configuration des panneaux - définie par les build flags ou valeurs par défaut
-
-#define MATRIX_WIDTH 32
-#define MATRIX_HEIGHT 16
-#define MATRIX_PANELS_X 3
-#define MATRIX_PANELS_Y 1
+// Configuration des panneaux - définie par les build flags ou valeurs par défaut si non déjà définies
+#ifndef MATRIX_WIDTH
+  #define MATRIX_WIDTH 32
+#endif
+#ifndef MATRIX_HEIGHT
+  #define MATRIX_HEIGHT 16
+#endif
+#ifndef MATRIX_PANELS_X
+  #define MATRIX_PANELS_X 3
+#endif
+#ifndef MATRIX_PANELS_Y
+  #define MATRIX_PANELS_Y 1
+#endif
 
 
 // Calcul des dimensions totales
