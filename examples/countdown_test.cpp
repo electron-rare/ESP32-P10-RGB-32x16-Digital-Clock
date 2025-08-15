@@ -33,7 +33,7 @@
 #endif
 
 #ifndef MATRIX_PANELS_X
-#define MATRIX_PANELS_X 1
+#define MATRIX_PANELS_X 3
 #endif
 
 #ifndef MATRIX_PANELS_Y
@@ -75,9 +75,12 @@ bool countdownExpired = false;
 const char* countdownTitle = "TEST COUNTDOWN";
 
 // Variables pour le texte défilant
-long scrollX = TOTAL_WIDTH;
+long scrollX = TOTAL_WIDTH; // Commence depuis la droite de tous les panneaux
 unsigned long lastScrollTime = 0;
 int scrollSpeed = 50;
+
+// Déclaration anticipée de la fonction getTextWidth
+uint16_t getTextWidth(const char* text);
 
 // Gestionnaire d'interruption pour l'affichage
 void IRAM_ATTR display_updater() {
@@ -89,9 +92,14 @@ void IRAM_ATTR display_updater() {
 // Activation du timer d'affichage
 void display_update_enable() {
   timer = timerBegin(0, 80, true);
-  timerAttachInterrupt(timer, &display_updater, true);
-  timerAlarmWrite(timer, 1500, true);
-  timerAlarmEnable(timer);
+  if (timer != NULL) {
+    timerAttachInterrupt(timer, &display_updater, true);
+    timerAlarmWrite(timer, 1500, true);
+    timerAlarmEnable(timer);
+    Serial.println("Display timer enabled successfully");
+  } else {
+    Serial.println("ERROR: Failed to create display timer");
+  }
 }
 
 // Fonction de calcul et formatage du countdown
@@ -117,13 +125,49 @@ void updateCountdown() {
   int minutes = (totalSeconds % 3600) / 60;
   int seconds = totalSeconds % 60;
   
-  // Formater le texte selon la durée restante
+  // Adapter le format selon la taille de l'écran
+  char tempText[101];
   if (days > 0) {
-    sprintf(countdownText, "%s: %dd %02dh %02dm %02ds", countdownTitle, days, hours, minutes, seconds);
+    sprintf(tempText, "%s: %dd %02dh %02dm %02ds", countdownTitle, days, hours, minutes, seconds);
   } else if (hours > 0) {
-    sprintf(countdownText, "%s: %02dh %02dm %02ds", countdownTitle, hours, minutes, seconds);
+    sprintf(tempText, "%s: %02dh %02dm %02ds", countdownTitle, hours, minutes, seconds);
   } else {
-    sprintf(countdownText, "%s: %02dm %02ds", countdownTitle, minutes, seconds);
+    sprintf(tempText, "%s: %02dm %02ds", countdownTitle, minutes, seconds);
+  }
+  
+  // Vérifier si le texte tient sur l'écran
+  uint16_t textWidth = getTextWidth(tempText);
+  if (textWidth <= TOTAL_WIDTH) {
+    // Le texte tient, pas besoin de défilement
+    strcpy(countdownText, tempText);
+  } else {
+    // Si le texte ne tient pas, utiliser un format plus compact si possible
+    if (days > 0) {
+      // Format sans titre, avec jours
+      sprintf(countdownText, "%dd %02dh %02dm %02ds", days, hours, minutes, seconds);
+      // Vérifier si ce format plus court tient sur l'écran
+      if (getTextWidth(countdownText) > TOTAL_WIDTH && MATRIX_PANELS_X < 3) {
+        // Format ultra-compact pour petits affichages
+        sprintf(countdownText, "%dd%02dh", days, hours);
+      }
+    } else if (hours > 0) {
+      // Format sans titre, avec heures
+      sprintf(countdownText, "%02dh %02dm %02ds", hours, minutes, seconds);
+      // Vérifier si ce format plus court tient sur l'écran
+      if (getTextWidth(countdownText) > TOTAL_WIDTH && MATRIX_PANELS_X < 2) {
+        // Format ultra-compact pour petits affichages
+        sprintf(countdownText, "%02dh%02dm", hours, minutes);
+      }
+    } else {
+      // Format sans titre, minutes seulement
+      sprintf(countdownText, "%02dm %02ds", minutes, seconds);
+      // Ce format devrait tenir même sur un seul panneau
+    }
+    
+    // Si le format compact ne tient toujours pas, on garde le texte original pour défilement
+    if (getTextWidth(countdownText) > TOTAL_WIDTH) {
+      strcpy(countdownText, tempText);
+    }
   }
 }
 
@@ -141,21 +185,36 @@ void runScrollingText(const char* text, uint16_t color) {
   if (currentTime - lastScrollTime >= scrollSpeed) {
     lastScrollTime = currentTime;
     
-    // Calculer la largeur du texte
-    int textWidth = strlen(text) * 6; // Approximation
+    // Calculer la largeur du texte avec la méthode précise
+    int textWidth = getTextWidth(text);
     
-    // Effacer la ligne de texte
+    // Effacer toute la ligne de texte sur toute la largeur des panneaux
     display.fillRect(0, 8, TOTAL_WIDTH, 8, myBLACK);
     
-    // Afficher le texte à la nouvelle position
+    // Afficher le texte à la position actuelle de défilement
+    // Le texte doit pouvoir entrer et sortir complètement de l'écran
     display.setCursor(scrollX, 8);
     display.setTextColor(color);
     display.print(text);
     
-    scrollX--;
+    // Ajuster la vitesse de défilement en fonction du nombre de panneaux
+    int scrollStep = 1;
+    if (MATRIX_PANELS_X >= 4) scrollStep = 2;
+    if (MATRIX_PANELS_X >= 6) scrollStep = 3;
+    
+    // Déplacer le texte
+    scrollX -= scrollStep;
+    
+    // Réinitialiser la position quand le texte est complètement sorti de l'écran
+    // Il faut attendre que le texte soit complètement sorti
     if (scrollX < -textWidth) {
+      // Recommencer depuis la droite de tous les panneaux
       scrollX = TOTAL_WIDTH;
     }
+    
+    // Pour le débogage, afficher des marqueurs aux extrémités
+    display.drawPixel(0, 15, myWHITE);            // Marqueur à gauche
+    display.drawPixel(TOTAL_WIDTH-1, 15, myWHITE); // Marqueur à droite
   }
 }
 
@@ -174,8 +233,14 @@ void setup() {
   }
   Serial.println("RTC initialized successfully");
   
-  // Initialisation de l'affichage
-  display.begin(8);
+  // Initialisation de l'affichage avec configuration P10 optimisée
+  display.begin(4); // 1/8 scan pour P10
+  display.setScanPattern(ZAGZIG);
+  display.setMuxPattern(BINARY); 
+  const int muxdelay = 10; // Délai de multiplexage
+  display.setMuxDelay(muxdelay, muxdelay, muxdelay, muxdelay, muxdelay);
+  delay(100);
+  
   display_update_enable();
   display.clearDisplay();
   
@@ -201,7 +266,27 @@ void setup() {
                 countdownTarget.day(), countdownTarget.month(), countdownTarget.year(),
                 countdownTarget.hour(), countdownTarget.minute(), countdownTarget.second());
   
+  // Test de la largeur d'affichage - afficher une ligne horizontale pour vérifier l'utilisation de tous les panneaux
+  display.clearDisplay();
+  display.drawFastHLine(0, 0, TOTAL_WIDTH, myWHITE);  // Ligne horizontale en haut
+  display.drawFastHLine(0, TOTAL_HEIGHT-1, TOTAL_WIDTH, myWHITE);  // Ligne horizontale en bas
+  display.drawFastVLine(0, 0, TOTAL_HEIGHT, myWHITE);  // Ligne verticale à gauche
+  display.drawFastVLine(TOTAL_WIDTH-1, 0, TOTAL_HEIGHT, myWHITE);  // Ligne verticale à droite
+  
+  // Afficher la résolution totale
+  char resText[20];
+  sprintf(resText, "%dx%d", TOTAL_WIDTH, TOTAL_HEIGHT);
+  int resWidth = getTextWidth(resText);
+  int resX = (TOTAL_WIDTH - resWidth) / 2;
+  if (resX < 0) resX = 0;
+  display.setCursor(resX, 4);
+  display.setTextColor(myYELLOW);
+  display.print(resText);
+  
+  delay(3000);
+  
   // Message de démarrage
+  display.clearDisplay();
   display.setTextColor(myWHITE);
   
   String startMsg = "COUNTDOWN TEST";
@@ -238,9 +323,31 @@ void loop() {
     updateCountdown();
   }
   
-  // Affichage en défilement
+  // Vérifier si le texte tient sur l'écran
+  uint16_t textWidth = getTextWidth(countdownText);
   uint16_t textColor = countdownExpired ? myRED : myORANGE;
-  runScrollingText(countdownText, textColor);
+  
+  // Effacer la ligne du texte sur toute la largeur disponible
+  display.fillRect(0, 8, TOTAL_WIDTH, 8, myBLACK);
+  
+  // Afficher des marqueurs aux extrémités de l'écran pour visualiser la largeur totale
+  display.drawPixel(0, 15, myWHITE);            // Marqueur à gauche
+  display.drawPixel(TOTAL_WIDTH-1, 15, myWHITE); // Marqueur à droite
+  
+  // Affichage du texte (centré ou défilant)
+  if (textWidth <= TOTAL_WIDTH) {
+    // Le texte tient sur l'écran, on le centre
+    int textX = (TOTAL_WIDTH - textWidth) / 2;
+    if (textX < 0) textX = 0;
+    
+    // Afficher le texte centré
+    display.setCursor(textX, 8);
+    display.setTextColor(textColor);
+    display.print(countdownText);
+  } else {
+    // Le texte est trop long, on utilise le défilement
+    runScrollingText(countdownText, textColor);
+  }
   
   // Affichage de l'heure actuelle en haut
   static unsigned long lastClockUpdate = 0;

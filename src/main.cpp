@@ -26,6 +26,7 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <DNSServer.h>
 #include <nvs_flash.h>
 #include "PageIndex.h"
 #include <freertos/FreeRTOS.h>
@@ -37,6 +38,12 @@ void DisplayTask(void *pvParameters);
 void WebServerTask(void *pvParameters);
 void WiFiTask(void *pvParameters);
 
+// Prototypes des gestionnaires web
+void handleRoot();
+void handleSettings();
+void handleCaptivePortal();
+void handleNotFound();
+
 // Pins pour la matrice LED
 #define P_LAT 5
 #define P_A   19
@@ -45,21 +52,12 @@ void WiFiTask(void *pvParameters);
 #define P_OE  4
 
 // Configuration des panneaux - définie par les build flags ou valeurs par défaut
-#ifndef MATRIX_WIDTH
+
 #define MATRIX_WIDTH 32
-#endif
-
-#ifndef MATRIX_HEIGHT
 #define MATRIX_HEIGHT 16
-#endif
-
-#ifndef MATRIX_PANELS_X
-#define MATRIX_PANELS_X 1
-#endif
-
-#ifndef MATRIX_PANELS_Y
+#define MATRIX_PANELS_X 3
 #define MATRIX_PANELS_Y 1
-#endif
+
 
 // Calcul des dimensions totales
 #define TOTAL_WIDTH (MATRIX_WIDTH * MATRIX_PANELS_X)
@@ -149,11 +147,11 @@ const char* ssid = "YOUR_WIFI_SSID";
 const char* password = "YOUR_WIFI_PASSWORD";
 
 // Configuration Point d'accès (si pas de WiFi)
-const char* ap_ssid = "ESP32_Clock";
-const char* ap_password = "esp32clock";
+const char* ap_ssid = "HOKA_Clock";
+const char* ap_password = "hoka";
 
 // Clé de sécurité pour l'interface web
-#define KEY_TXT "p10rgbesp32ws"
+#define KEY_TXT "hoka"
   // display_update_enable(true); // NE PAS activer ici
 // Mode de fonctionnement WiFi
 bool useStationMode = false; // true = se connecter au WiFi, false = créer un point d'accès
@@ -162,16 +160,21 @@ bool useStationMode = false; // true = se connecter au WiFi, false = créer un p
 RTC_DS3231 rtc;
 Preferences preferences;
 
-// Serveur web
+// Serveur web et DNS pour portail captif
 WebServer server(80);
+DNSServer dnsServer;
+
+// Configuration du portail captif
+const byte DNS_PORT = 53;
+const IPAddress apIP(192, 168, 1, 1);
 
 // Gestionnaire d'interruption pour l'affichage
 void IRAM_ATTR display_updater() {
-  if (timer != NULL) {
+  //if (timer != NULL) {
     portENTER_CRITICAL_ISR(&timerMux);
     display.display(display_draw_time);
     portEXIT_CRITICAL_ISR(&timerMux);
-  }
+  //}
 }
 
 // Activation/désactivation du timer d'affichage
@@ -236,30 +239,34 @@ void connecting_To_WiFi() {
   Serial.println("-------------");
 }
 
-// Configuration du point d'accès
+// Configuration du point d'accès avec portail captif
 void set_ESP32_Access_Point() {
   Serial.println("\n-------------");
-  Serial.println("WIFI mode : AP");
+  Serial.println("WIFI mode : AP avec Portail Captif");
   WiFi.mode(WIFI_AP);
   Serial.println("-------------");
   delay(1000);
 
   Serial.println("\n-------------");
-  Serial.println("Setting up ESP32 to be an Access Point.");
+  Serial.println("Setting up ESP32 to be an Access Point with Captive Portal.");
   WiFi.softAP(ap_ssid, ap_password);
   delay(1000);
   
-  IPAddress local_ip(192, 168, 1, 1);
+  // Configuration IP avec l'adresse définie pour le portail captif
   IPAddress gateway(192, 168, 1, 1);
   IPAddress subnet(255, 255, 255, 0);
   
-  // SUPPRESSION de l'activation du timer ici - sera fait plus tard
-  WiFi.softAPConfig(local_ip, gateway, subnet);
+  WiFi.softAPConfig(apIP, gateway, subnet);
+  
+  // Démarrage du serveur DNS pour le portail captif
+  dnsServer.start(DNS_PORT, "*", apIP);
+  
   Serial.println("-------------");
   Serial.print("SSID name : ");
   Serial.println(ap_ssid);
   Serial.print("IP address : ");
   Serial.println(WiFi.softAPIP());
+  Serial.println("Portail captif activé - toutes les requêtes DNS seront redirigées");
   delay(1000);
 }
 
@@ -418,6 +425,34 @@ void loadSettings() {
   }
 }
 
+// Gestionnaire pour le portail captif - redirige toutes les requêtes non reconnues
+void handleCaptivePortal() {
+  // Vérifier si c'est une requête pour la page principale de l'interface
+  String hostHeader = server.hostHeader();
+  
+  // Si l'utilisateur accède directement à l'IP de l'ESP32, afficher la page normale
+  if (hostHeader == WiFi.softAPIP().toString() || hostHeader == "192.168.1.1") {
+    handleRoot();
+    return;
+  }
+  
+  // Pour toutes les autres requêtes (portail captif), rediriger vers l'interface
+  String redirectUrl = "http://" + WiFi.softAPIP().toString();
+  server.sendHeader("Location", redirectUrl, true);
+  server.send(302, "text/plain", "");
+}
+
+// Gestionnaire pour toutes les requêtes non définies (NotFound)
+void handleNotFound() {
+  if (!useStationMode) {
+    // En mode AP, traiter comme une requête de portail captif
+    handleCaptivePortal();
+  } else {
+    // En mode Station, retourner une erreur 404 normale
+    server.send(404, "text/plain", "Page non trouvée");
+  }
+}
+
 // Gestionnaire de la page principale
 void handleRoot() {
   server.send(200, "text/html", MAIN_page);
@@ -431,13 +466,7 @@ void handleSettings() {
   Serial.print("Key : ");
   Serial.println(incoming_Settings);
 
-  if (incoming_Settings != KEY_TXT) {
-    server.send(200, "text/plain", "+ERR");
-    Serial.println("Wrong key!");
-    Serial.println("-------------");
-    return;
-  }
-
+  // Validation de clé supprimée - accès libre
   incoming_Settings = server.arg("sta");
 
   // Définir la date et l'heure
@@ -704,8 +733,18 @@ void handleSettings() {
 
 // Configuration et démarrage du serveur
 void prepare_and_start_The_Server() {
+  // Routes principales
   server.on("/", handleRoot);
   server.on("/settings", handleSettings);
+  
+  // Routes communes pour le portail captif
+  server.on("/generate_204", handleRoot);  // Android
+  server.on("/fwlink", handleRoot);        // Microsoft
+  server.on("/hotspot-detect.html", handleRoot); // Apple
+  
+  // Gestionnaire pour toutes les autres requêtes (portail captif)
+  server.onNotFound(handleNotFound);
+  
   delay(500);
 
   server.begin();
@@ -718,12 +757,13 @@ void prepare_and_start_The_Server() {
   } else {
     Serial.print("Connect to WiFi network: ");
     Serial.println(ap_ssid);
-    Serial.print("Then open http://");
+    Serial.print("Captive Portal active - navigate to any website");
+    Serial.print(" or open http://");
     Serial.print(WiFi.softAPIP());
-    Serial.println(" in your browser");
+    Serial.println(" directly");
   }
   
-  Serial.println("Use key: " KEY_TXT);
+  Serial.println("No authentication required - Open access");
   delay(500);
 }
 
@@ -776,7 +816,12 @@ void setup() {
   Serial.println("------------");
 
   // Initialisation de l'affichage
-  display.begin(8); // Valeur 8 pour un panneau 1/8 scan
+    // Initialisation de l'affichage avec configuration P10 optimisée
+  display.begin(4); // 1/8 scan pour P10
+  display.setScanPattern(ZAGZIG);
+  display.setMuxPattern(BINARY); 
+  const int muxdelay = 10; // Délai de multiplexage
+  display.setMuxDelay(muxdelay, muxdelay, muxdelay, muxdelay, muxdelay);
   delay(100);
 
   // NE PAS activer le timer ici - attendre après le WiFi
@@ -1016,6 +1061,12 @@ void WebServerTask(void *pvParameters) {
   
   for (;;) {
     server.handleClient();
+    
+    // Gestion du serveur DNS pour le portail captif (uniquement en mode AP)
+    if (!useStationMode) {
+      dnsServer.processNextRequest();
+    }
+    
     vTaskDelay(pdMS_TO_TICKS(5)); // FreeRTOS : délai approprié de 5ms
   }
 }

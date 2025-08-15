@@ -16,11 +16,8 @@ const char MAIN_page[] PROGMEM = R"=====(
   
       .div_Form {
         margin: auto;
-        wi        function setScrollingSpeed() {
-          var msg = "sta=setScrollingSpeed";
-          msg += "&input_ScrollingSpeed=" + document.getElementById("input_ScrollingSpeed").value;
-          sendCommandToESP32("set", msg);
-        }        border:1px solid #D8D8D8;
+        width: 90%;
+        border:1px solid #D8D8D8;
         border-radius: 10px;
         background-color: #f2f2f2;
         padding: 9px 9px;
@@ -486,7 +483,12 @@ const char MAIN_page[] PROGMEM = R"=====(
         }
         
         function setBrightness() {
-          var msg = "sta=setBrightness";
+          var key = document.getElementById("key").value;
+          if (key == "") {
+            alert("Please enter the key!");
+            return;
+          }
+          var msg = "key=" + key + "&sta=setBrightness";
           msg += "&input_Brightness=" + document.getElementById("input_Brightness").value;
           sendCommandToESP32("set", msg);
         }
@@ -503,8 +505,15 @@ const char MAIN_page[] PROGMEM = R"=====(
         }
         
         function setColorClock() {
-          var msg = "sta=setColorClock";
-          msg += "&input_ColorClock=" + document.getElementById("input_ColorClock").value;
+          var key = document.getElementById("key").value;
+          if (key == "") {
+            alert("Please enter the key!");
+            return;
+          }
+          var msg = "key=" + key + "&sta=setColorClock";
+          msg += "&Color_Clock_R=" + document.getElementById("Color_Clock_R").value;
+          msg += "&Color_Clock_G=" + document.getElementById("Color_Clock_G").value;
+          msg += "&Color_Clock_B=" + document.getElementById("Color_Clock_B").value;
           sendCommandToESP32("set", msg);
         }
         
@@ -522,7 +531,12 @@ const char MAIN_page[] PROGMEM = R"=====(
         }
         
         function setColorText() {
-          var msg = "sta=setColorText";
+          var key = document.getElementById("key").value;
+          if (key == "") {
+            alert("Please enter the key!");
+            return;
+          }
+          var msg = "key=" + key + "&sta=setColorText";
           msg += "&Color_Text_R=" + document.getElementById("Color_Text_R").value;
           msg += "&Color_Text_G=" + document.getElementById("Color_Text_G").value;
           msg += "&Color_Text_B=" + document.getElementById("Color_Text_B").value;
@@ -530,12 +544,23 @@ const char MAIN_page[] PROGMEM = R"=====(
         }
         
         function setScrollingText() {
-          var msg = "sta=setScrollingText";
+          var key = document.getElementById("key").value;
+          if (key == "") {
+            alert("Please enter the key!");
+            return;
+          }
+          var msg = "key=" + key + "&sta=setScrollingText";
           msg += "&input_Scrolling_Text=" + encodeURIComponent(document.getElementById("input_Scrolling_Text").value);
           sendCommandToESP32("set", msg);
         }
         
         function setCountdown() {
+          var key = document.getElementById("key").value;
+          if (key == "") {
+            alert("Please enter the key!");
+            return;
+          }
+          
           // Validation des champs
           var day = document.getElementById("countdown_Day").value;
           var month = document.getElementById("countdown_Month").value;
@@ -561,7 +586,7 @@ const char MAIN_page[] PROGMEM = R"=====(
             return;
           }
           
-          var msg = "sta=setCountdown";
+          var msg = "key=" + key + "&sta=setCountdown";
           msg += "&countdown_Active=" + document.getElementById("countdown_Active").checked;
           msg += "&countdown_Day=" + day;
           msg += "&countdown_Month=" + month;
@@ -574,7 +599,12 @@ const char MAIN_page[] PROGMEM = R"=====(
         }
         
         function setColorCountdown() {
-          var msg = "sta=setColorCountdown";
+          var key = document.getElementById("key").value;
+          if (key == "") {
+            alert("Please enter the key!");
+            return;
+          }
+          var msg = "key=" + key + "&sta=setColorCountdown";
           msg += "&Color_Countdown_R=" + document.getElementById("Color_Countdown_R").value;
           msg += "&Color_Countdown_G=" + document.getElementById("Color_Countdown_G").value;
           msg += "&Color_Countdown_B=" + document.getElementById("Color_Countdown_B").value;
@@ -582,8 +612,13 @@ const char MAIN_page[] PROGMEM = R"=====(
         }
         
         function resetSystem() {
+          var key = document.getElementById("key").value;
+          if (key == "") {
+            alert("Please enter the key!");
+            return;
+          }
           if (confirm("Are you sure you want to reset the system?")) {
-            var msg = "sta=resetSystem";
+            var msg = "key=" + key + "&sta=resetSystem";
             sendCommandToESP32("set", msg);
           }
         }

@@ -209,6 +209,48 @@
                 "focus": false,
                 "panel": "shared"
             }
+        },
+        {
+            "label": "PlatformIO: Upload Fullscreen Countdown Web",
+            "type": "shell",
+            "command": "pio",
+            "args": ["run", "-e", "fullscreen_countdown_web", "--target", "upload"],
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            },
+            "problemMatcher": "$gcc"
+        },
+        {
+            "label": "PlatformIO: Test P10 Cascade",
+            "type": "shell",
+            "command": "pio",
+            "args": ["run", "-e", "p10_cascade_test", "--target", "upload"],
+            "group": "test",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            },
+            "problemMatcher": "$gcc"
+        },
+        {
+            "label": "PlatformIO: Test Captive Portal",
+            "type": "shell",
+            "command": "pio",
+            "args": ["run", "-e", "captive_portal_test", "--target", "upload"],
+            "group": "test",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            },
+            "problemMatcher": "$gcc"
         }
     ]
 }

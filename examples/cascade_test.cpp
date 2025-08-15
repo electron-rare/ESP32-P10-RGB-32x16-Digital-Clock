@@ -49,7 +49,8 @@ hw_timer_t * timer = NULL;
 portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
 
 // Temps d'affichage ajusté selon le nombre de panneaux
-uint8_t display_draw_time = (MATRIX_PANELS_X * MATRIX_PANELS_Y > 4) ? 20 : 30;
+ uint8_t display_draw_time = (MATRIX_PANELS_X * MATRIX_PANELS_Y > 4) ? 20 : 30;
+//uint8_t display_draw_time = 30;
 
 // Objet matrice
 PxMATRIX display(TOTAL_WIDTH, TOTAL_HEIGHT, P_LAT, P_OE, P_A, P_B, P_C);
@@ -84,9 +85,14 @@ void IRAM_ATTR display_updater() {
 // Activation du timer d'affichage
 void display_update_enable() {
   timer = timerBegin(0, 80, true);
-  timerAttachInterrupt(timer, &display_updater, true);
-  timerAlarmWrite(timer, 1500, true);
-  timerAlarmEnable(timer);
+  if (timer != NULL) {
+    timerAttachInterrupt(timer, &display_updater, true);
+    timerAlarmWrite(timer, 1500, true);
+    timerAlarmEnable(timer);
+    Serial.println("Display timer enabled successfully");
+  } else {
+    Serial.println("ERROR: Failed to create display timer");
+  }
 }
 
 // Test des bordures et alignement des panneaux
@@ -203,14 +209,20 @@ void setup() {
                 MATRIX_PANELS_X, MATRIX_PANELS_Y, TOTAL_WIDTH, TOTAL_HEIGHT);
   Serial.printf("Draw time: %d\n", display_draw_time);
   
-  // Initialisation de l'affichage
-  display.begin(8);
+  // Initialisation de l'affichage avec configuration P10 optimisée
+  display.begin(4); // 1/8 scan pour P10
+  display.setScanPattern(LINE);
+  display.setMuxPattern(BINARY); 
+  const int muxdelay = 10; // Délai de multiplexage
+  display.setMuxDelay(muxdelay, muxdelay, muxdelay, muxdelay, muxdelay);
+  delay(100);
+  
   display_update_enable();
   display.clearDisplay();
   
   // Luminosité adaptée au nombre de panneaux
   int brightness = 150;
-  if (MATRIX_PANELS_X > 2) brightness = 100;
+  if (MATRIX_PANELS_X > 2) brightness = 10;
   if (MATRIX_PANELS_X > 4) brightness = 80;
   if (MATRIX_PANELS_X > 6) brightness = 60;
   
