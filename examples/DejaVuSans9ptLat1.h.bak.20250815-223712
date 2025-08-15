@@ -1,0 +1,40 @@
+// Minimal DejaVuSans 9pt Latin-1 subset font (32-255) placeholder
+// Generated placeholder: replace PROGMEM data with real glyphs for production.
+#ifndef DEJAVUSANS9PTLAT1_H
+#define DEJAVUSANS9PTLAT1_H
+#include <stdint.h>
+// Inclusion conditionnelle: si Adafruit_GFX déjà inclus ailleurs, ces forward declarations ne gênent pas
+typedef struct { // Minimal GFXglyph structure
+  uint16_t bitmapOffset; // Pointer into GFXfont->bitmap
+  uint8_t  width;        // Bitmap dimensions in pixels
+  uint8_t  height;       // Bitmap dimensions in pixels
+  uint8_t  xAdvance;     // Distance to advance cursor (x axis)
+  int8_t   xOffset;      // X dist from cursor pos to UL corner
+  int8_t   yOffset;      // Y dist from cursor pos to UL corner
+} GFXglyph;
+
+typedef struct { // Minimal GFXfont structure
+  const uint8_t *bitmap;  // Glyph bitmaps, concatenated
+  const GFXglyph *glyph;  // Glyph array
+  uint8_t   first;        // ASCII ext first
+  uint8_t   last;         // ASCII ext last
+  uint8_t   yAdvance;     // Newline distance (y)
+} GFXfont;
+
+// Simple placeholder glyph data: reuse space glyph for all to keep structure compiling.
+// REAL IMPLEMENTATION: Run fontconvert or use an online GFX font generator to produce
+// DejaVu Sans 9pt covering 0x20-0xFF then replace the bitmap, glyph table, and yAdvance.
+
+static const uint8_t DejaVuSans9ptLat1Bitmaps[] = { 0x00 };
+
+static const GFXglyph DejaVuSans9ptLat1Glyphs[] = {
+  { 0, 0, 0, 4, 0, 0 } // placeholder only
+};
+
+static const GFXfont DejaVuSans9ptLat1 = {
+  DejaVuSans9ptLat1Bitmaps,
+  DejaVuSans9ptLat1Glyphs,
+  0x20, 0x20, 18
+};
+
+#endif // DEJAVUSANS9PTLAT1_H

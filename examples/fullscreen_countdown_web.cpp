@@ -37,7 +37,7 @@
 #include <Fonts/FreeSans9pt7b.h>
 #include <Fonts/FreeMono9pt7b.h>
 // Option police étendue : ajouter ici votre police Latin-1 générée et définir HAVE_LATIN1_FONT
-// #include "DejaVuSans9ptLat1.h" // Décommentez après génération
+#include "DejaVuSans9ptLat1.h" // Placeholder Latin-1 font (remplacer par version générée)
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Preferences.h>
@@ -283,6 +283,72 @@ size_t foldAccents(const char *in, char *out, size_t outSize) {
       }
     } else {
       // Séquence multioctet non gérée -> ignorer octet
+      in++;
+    }
+  }
+  out[o] = '\0';
+  return o;
+}
+
+// Conversion UTF-8 -> Latin-1 (ISO-8859-1). Les caractères hors plage 0x00-0xFF
+// (émojis, symboles hors Latin-1) sont remplacés par '?'.
+// Nécessaire car la police étendue générée couvre 0x20-0xFF (octets simples) alors
+// que l'entrée (depuis le formulaire web) est en UTF-8 multioctet.
+size_t utf8ToLatin1(const char *in, char *out, size_t outSize) {
+  if (!in || !out || outSize == 0) return 0;
+  size_t o = 0;
+  while (*in && o + 1 < outSize) {
+    unsigned char c = (unsigned char)*in;
+    if (c < 0x80) { // ASCII direct
+      out[o++] = c; in++;
+    } else if ((c & 0xE0) == 0xC0 && in[1]) { // 2 octets
+      unsigned char c2 = (unsigned char)in[1];
+      if ((c2 & 0xC0) == 0x80) {
+        uint16_t code = ((c & 0x1F) << 6) | (c2 & 0x3F); // U+0080..U+07FF
+        if (code <= 0x00FF) {
+          out[o++] = (char)code;
+        } else {
+          out[o++] = '?';
+        }
+        in += 2;
+      } else {
+        out[o++] = '?'; in++;
+      }
+    } else if ((c & 0xF0) == 0xE0 && in[1] && in[2]) { // 3 octets
+      unsigned char c2 = (unsigned char)in[1];
+      unsigned char c3 = (unsigned char)in[2];
+      if (((c2 & 0xC0) == 0x80) && ((c3 & 0xC0) == 0x80)) {
+        uint16_t code = ((c & 0x0F) << 12) | ((c2 & 0x3F) << 6) | (c3 & 0x3F);
+        if (code <= 0x00FF) {
+          out[o++] = (char)code;
+        } else {
+          // Remplacements spécifiques ponctuation “smart” courante
+          switch (code) {
+            case 0x2018: // ‘
+            case 0x2019: // ’
+              out[o++] = '\''; break;
+            case 0x201C: // “
+            case 0x201D: // ”
+              out[o++] = '"'; break;
+            case 0x2013: // –
+            case 0x2014: // —
+              out[o++] = '-'; break;
+            case 0x2026: // …
+              if (o + 3 < outSize) { out[o++]='.'; out[o++]='.'; out[o++]='.'; }
+              else out[o++]='.'; // fallback partiel si peu de place
+              break;
+            default:
+              out[o++] = '?';
+          }
+        }
+        in += 3;
+      } else {
+        out[o++] = '?'; in++;
+      }
+    } else { // 4 octets ou séquence invalide -> non représentable
+      out[o++] = '?';
+      // Skipper au moins 1 octet (si séquence UTF-8 valide on pourrait consommer tous, mais
+      // pour simplicité on avance octet par octet sur séquences plus longues)
       in++;
     }
   }
@@ -744,8 +810,8 @@ void displayFullscreenCountdown(int days, int hours, int minutes, int seconds) {
   if (countdownExpired) {
     // Si police Latin-1 sélectionnée (index 4), garder accents tels quels
     if (fontIndex == 4) {
-      strncpy(currentText, countdownTitle, sizeof(currentText)-1);
-      currentText[sizeof(currentText)-1] = '\0';
+      // Convertir UTF-8 reçu du navigateur en octets Latin-1 que la police couvre
+      utf8ToLatin1(countdownTitle, currentText, sizeof(currentText));
     } else {
       // fallback pliage si police sans accents
       char folded[64];
