@@ -36,6 +36,8 @@
 #include <Fonts/FreeSansBold9pt7b.h>
 #include <Fonts/FreeSans9pt7b.h>
 #include <Fonts/FreeMono9pt7b.h>
+// Option police étendue : ajouter ici votre police Latin-1 générée et définir HAVE_LATIN1_FONT
+// #include "DejaVuSans9ptLat1.h" // Décommentez après génération
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Preferences.h>
@@ -304,7 +306,7 @@ int countdownTextSize = 2; // 1-3
 int countdownColorR = 0;
 int countdownColorG = 255;
 int countdownColorB = 0;
-int fontIndex = 0; // 0=Default, 1=Sans, 2=Sans Bold, 3=Mono
+int fontIndex = 0; // 0=Default, 1=Sans, 2=Sans Bold, 3=Mono, 4=Latin-1
 uint16_t countdownColor;
 int displayBrightness = -1; // -1 = auto (calculé selon nombre de panneaux)
 
@@ -397,6 +399,7 @@ footer { margin:40px 0 10px; text-align:center; font-size:.6rem; letter-spacing:
               <option value="1">Sans Serif</option>
               <option value="2">Sans Serif Bold</option>
               <option value="3">Monospace</option>
+              <option value="4">Latin-1 (Accents)</option>
             </select>
           </div>
           <div class="field"><label for="textSize">Taille</label>
@@ -689,6 +692,12 @@ const GFXfont* getFontByIndex(int index) {
       return &FreeSansBold9pt7b;
     case 3:
       return &FreeMono9pt7b;
+    case 4:
+      #ifdef HAVE_LATIN1_FONT
+      return &DejaVuSans9ptLat1; // Police générée incluant accents (32-255)
+      #else
+      return &FreeSans9pt7b; // fallback si non fournie
+      #endif
     default:
       return NULL; // Police par défaut
   }
@@ -733,11 +742,17 @@ void displayFullscreenCountdown(int days, int hours, int minutes, int seconds) {
   // Préparer le texte cible
   char currentText[64];
   if (countdownExpired) {
-    // Normaliser accents pour compatibilité police si nécessaire
-    char folded[64];
-    foldAccents(countdownTitle, folded, sizeof(folded));
-    strncpy(currentText, folded, sizeof(currentText)-1);
-    currentText[sizeof(currentText)-1] = '\0';
+    // Si police Latin-1 sélectionnée (index 4), garder accents tels quels
+    if (fontIndex == 4) {
+      strncpy(currentText, countdownTitle, sizeof(currentText)-1);
+      currentText[sizeof(currentText)-1] = '\0';
+    } else {
+      // fallback pliage si police sans accents
+      char folded[64];
+      foldAccents(countdownTitle, folded, sizeof(folded));
+      strncpy(currentText, folded, sizeof(currentText)-1);
+      currentText[sizeof(currentText)-1] = '\0';
+    }
   } else {
     switch (displayFormat) {
       case 0:  snprintf(currentText, sizeof(currentText), "%dd %02d:%02d", days, hours, minutes); break;
@@ -995,7 +1010,7 @@ void loadSettings() {
     countdownColorR = preferences.getInt("colorR", 0);
     countdownColorG = preferences.getInt("colorG", 255);
     countdownColorB = preferences.getInt("colorB", 0);
-    fontIndex = preferences.getInt("fontIndex", 0);
+  fontIndex = preferences.getInt("fontIndex", 0); // accepte maintenant 0-4
   blinkEnabled = preferences.getBool("blinkEn", true);
   blinkIntervalMs = preferences.getInt("blinkInt", 500);
   blinkWindowSeconds = preferences.getInt("blinkWin", 10);
@@ -1191,7 +1206,7 @@ void handleGetSettings() {
   json += "\"colorR\":" + String(countdownColorR) + ",";
   json += "\"colorG\":" + String(countdownColorG) + ",";
   json += "\"colorB\":" + String(countdownColorB) + ",";
-  json += "\"fontIndex\":" + String(fontIndex) + ",";
+  json += "\"fontIndex\":" + String(fontIndex) + ","; // 0-4
   json += "\"blinkEnabled\":" + String(blinkEnabled ? 1 : 0) + ",";
   json += "\"blinkIntervalMs\":" + String(blinkIntervalMs) + ",";
   json += "\"blinkWindow\":" + String(blinkWindowSeconds) + ",";
@@ -1385,7 +1400,7 @@ void handleSettings() {
   if (countdownTextSize > 3) countdownTextSize = 3;
   
   if (fontIndex < 0) fontIndex = 0;
-  if (fontIndex > 3) fontIndex = 3;
+  if (fontIndex > 4) fontIndex = 4;
   
   // Mettre à jour le titre
     if (title.length() > 0) {
