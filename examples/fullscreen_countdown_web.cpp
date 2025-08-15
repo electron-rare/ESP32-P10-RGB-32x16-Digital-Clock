@@ -132,6 +132,46 @@ uint16_t myORANGE   = display.color565(255, 165, 0);
 // Prototypes des fonctions
 void IRAM_ATTR display_updater();
 
+// Utilitaire : copie tronquée en respectant les limites UTF-8 (nombre de caractères et non octets)
+// maxChars : nombre maximum de caractères (glyphes) à conserver (excluant le nul final)
+// destSize : taille du buffer destination (incluant place pour nul)
+size_t utf8SafeCopyTruncate(const String &src, char *dest, size_t destSize, size_t maxChars) {
+  if (destSize == 0) return 0;
+  const uint8_t *bytes = (const uint8_t*)src.c_str();
+  size_t i = 0;       // index source en octets
+  size_t o = 0;       // index destination
+  size_t chars = 0;   // compte de caractères
+  while (bytes[i] != '\0' && chars < maxChars && o + 1 < destSize) {
+    uint8_t c = bytes[i];
+    size_t seqLen = 1;
+    if ((c & 0x80) == 0x00) seqLen = 1;                // 0xxxxxxx
+    else if ((c & 0xE0) == 0xC0) seqLen = 2;           // 110xxxxx
+    else if ((c & 0xF0) == 0xE0) seqLen = 3;           // 1110xxxx
+    else if ((c & 0xF8) == 0xF0) seqLen = 4;           // 11110xxx
+    else { // octet invalide -> arrêter
+      break;
+    }
+    // Vérifier que la séquence tient dans la source
+    for (size_t k = 1; k < seqLen; ++k) {
+      uint8_t nc = bytes[i + k];
+      if ((nc & 0xC0) != 0x80) { // pas une continuation valide
+        seqLen = 1; // tronquer au premier octet
+        break;
+      }
+    }
+    // Vérifier que ça rentre dans dest
+    if (o + seqLen + 1 >= destSize) break;
+    // Copier
+    for (size_t k = 0; k < seqLen; ++k) {
+      dest[o++] = (char)bytes[i + k];
+    }
+    i += seqLen;
+    chars++;
+  }
+  dest[o] = '\0';
+  return o; // octets copiés
+}
+
 // Prototypes des tâches
 void DisplayTask(void * parameter);
 void WebServerTask(void * parameter);
@@ -141,7 +181,6 @@ void NetworkTask(void * parameter);
 // Variables pour le countdown
 DateTime countdownTarget;
 bool countdownExpired = false;
-bool settingsLoaded = false; // Indicateur que les paramètres sont chargés
 bool blinkLastSeconds = false;  // Clignotement pour les 10 dernières secondes
 bool blinkState = true;
 unsigned long lastBlinkTime = 0;
@@ -163,8 +202,7 @@ int countdownTextSize = 2; // 1-3
 int countdownColorR = 0;
 int countdownColorG = 255;
 int countdownColorB = 0;
-int fontIndex = 0; // 0=Default, 1=Sans, 2=Sans Bold, 3=Mono (pour le countdown)
-int endTextFontIndex = 0; // Police pour le texte de fin
+int fontIndex = 0; // 0=Default, 1=Sans, 2=Sans Bold, 3=Mono
 uint16_t countdownColor;
 
 // Format d'affichage (0=jours, 1=heures, 2=minutes, 3=secondes uniquement)
@@ -173,867 +211,250 @@ int displayFormat = 0;
 // HTML Page
 const char MAIN_page[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
-<html lang="fr">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ESP32 P10 Countdown - Configuration</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <title>ESP32 P10 Countdown Configuration</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-        :root {
-            --primary-color: #6366f1;
-            --primary-dark: #4f46e5;
-            --secondary-color: #10b981;
-            --accent-color: #f59e0b;
-            --danger-color: #ef4444;
-            --background: #f8fafc;
-            --surface: #ffffff;
-            --surface-dark: #f1f5f9;
-            --text-primary: #1e293b;
-            --text-secondary: #64748b;
-            --border: #e2e8f0;
-            --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-            --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
-            --border-radius: 12px;
-            --transition: all 0.2s ease-in-out;
-        }
-
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            color: var(--text-primary);
-            line-height: 1.6;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+            color: #333;
         }
-
-        .header {
+        h1 {
+            color: #009688;
             text-align: center;
-            padding: 2rem 1rem;
-            color: white;
         }
-
-        .header h1 {
-            font-size: 2.5rem;
-            font-weight: 700;
-            margin-bottom: 0.5rem;
-            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
-        }
-
-        .header p {
-            font-size: 1.1rem;
-            opacity: 0.9;
-            font-weight: 300;
-        }
-
         .container {
-            max-width: 800px;
+            max-width: 600px;
             margin: 0 auto;
-            padding: 0 1rem 2rem;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }
-
-        .card {
-            background: var(--surface);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-lg);
-            overflow: hidden;
-            margin-bottom: 1.5rem;
-            border: 1px solid var(--border);
-        }
-
-        .card-header {
-            background: var(--surface-dark);
-            padding: 1.5rem;
-            border-bottom: 1px solid var(--border);
-        }
-
-        .card-header h2 {
-            font-size: 1.25rem;
-            font-weight: 600;
-            color: var(--text-primary);
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .card-content {
-            padding: 1.5rem;
-        }
-
-        .countdown-preview {
-            background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
-            border-radius: var(--border-radius);
-            padding: 2rem;
-            text-align: center;
-            margin-bottom: 1.5rem;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .countdown-preview::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: radial-gradient(circle at 30% 20%, rgba(99, 102, 241, 0.3) 0%, transparent 50%);
-            pointer-events: none;
-        }
-
-        .countdown-display {
-            font-family: 'Courier New', monospace;
-            font-size: 2.5rem;
-            font-weight: bold;
-            color: #00ff00;
-            text-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
-            position: relative;
-            z-index: 1;
-        }
-
-        .countdown-title {
-            font-size: 1rem;
-            color: rgba(255, 255, 255, 0.8);
-            margin-top: 0.5rem;
-            position: relative;
-            z-index: 1;
-        }
-
-        .form-grid {
-            display: grid;
-            gap: 1rem;
-        }
-
         .form-group {
-            margin-bottom: 1.5rem;
+            margin-bottom: 15px;
         }
-
-        .form-row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 1rem;
-        }
-
-        @media (max-width: 640px) {
-            .form-row {
-                grid-template-columns: 1fr;
-            }
-        }
-
-        .form-label {
+        label {
             display: block;
-            font-weight: 500;
-            color: var(--text-primary);
-            margin-bottom: 0.5rem;
-            font-size: 0.875rem;
+            margin-bottom: 5px;
+            font-weight: bold;
         }
-
-        .form-input, .form-select {
+        input, select {
             width: 100%;
-            padding: 0.75rem;
-            border: 2px solid var(--border);
-            border-radius: 8px;
-            background: var(--surface);
-            color: var(--text-primary);
-            font-size: 0.875rem;
-            transition: var(--transition);
+            padding: 8px;
+            box-sizing: border-box;
+            border: 1px solid #ddd;
+            border-radius: 4px;
         }
-
-        .form-input:focus, .form-select:focus {
-            outline: none;
-            border-color: var(--primary-color);
-            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
-        }
-
-        .color-picker-group {
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-        }
-
-        .color-input {
-            width: 60px;
+        input[type="color"] {
             height: 40px;
-            border: 2px solid var(--border);
-            border-radius: 8px;
-            cursor: pointer;
-            transition: var(--transition);
         }
-
-        .color-input:hover {
-            transform: scale(1.05);
-        }
-
-        .color-preview {
-            width: 40px;
-            height: 40px;
-            border-radius: 8px;
-            border: 2px solid var(--border);
-            transition: var(--transition);
-        }
-
-        .color-presets {
-            display: flex;
-            gap: 0.5rem;
-            margin-top: 0.5rem;
-            flex-wrap: wrap;
-        }
-
-        .color-preset {
-            width: 32px;
-            height: 32px;
-            border-radius: 6px;
-            border: 2px solid var(--border);
-            cursor: pointer;
-            transition: var(--transition);
-        }
-
-        .color-preset:hover {
-            transform: scale(1.1);
-            border-color: var(--primary-color);
-        }
-
-        .button-group {
-            display: flex;
-            gap: 1rem;
-            margin-top: 2rem;
-        }
-
-        .btn {
-            flex: 1;
-            padding: 0.875rem 1.5rem;
+        button {
+            background-color: #009688;
+            color: white;
             border: none;
-            border-radius: 8px;
-            font-weight: 600;
-            font-size: 0.875rem;
+            padding: 10px 15px;
+            border-radius: 4px;
             cursor: pointer;
-            transition: var(--transition);
+            font-size: 16px;
+            display: block;
+            width: 100%;
+            margin-top: 10px;
+        }
+        button:hover {
+            background-color: #00796b;
+        }
+        .section {
+            border-top: 1px solid #eee;
+            padding-top: 15px;
+            margin-top: 15px;
+        }
+        .color-picker {
             display: flex;
             align-items: center;
-            justify-content: center;
-            gap: 0.5rem;
-            text-decoration: none;
         }
-
-        .btn-primary {
-            background: var(--primary-color);
-            color: white;
+        .color-preview {
+            width: 30px;
+            height: 30px;
+            margin-left: 10px;
+            border: 1px solid #ccc;
         }
-
-        .btn-primary:hover {
-            background: var(--primary-dark);
-            transform: translateY(-1px);
-            box-shadow: var(--shadow);
+        #countdown-preview {
+            text-align: center;
+            font-size: 22px;
+            margin: 15px 0;
+            padding: 10px;
+            border-radius: 4px;
+            background-color: #000;
+            color: #0f0;
         }
-
-        .btn-secondary {
-            background: var(--surface);
-            color: var(--text-primary);
-            border: 2px solid var(--border);
-        }
-
-        .btn-secondary:hover {
-            background: var(--surface-dark);
-            border-color: var(--primary-color);
-        }
-
-        .btn-danger {
-            background: var(--danger-color);
-            color: white;
-        }
-
-        .btn-danger:hover {
-            background: #dc2626;
-            transform: translateY(-1px);
-        }
-
-        .btn-sm {
-            padding: 0.5rem 1rem;
-            font-size: 0.8rem;
-        }
-
-        .section-buttons {
-            margin-top: 1.5rem;
-            padding-top: 1rem;
-            border-top: 1px solid var(--border);
-            display: flex;
-            justify-content: flex-end;
-        }
-
-        .status-indicator {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.5rem 1rem;
-            border-radius: 20px;
-            font-size: 0.875rem;
-            font-weight: 500;
-            margin-bottom: 1rem;
-        }
-
-        .status-connected {
-            background: rgba(16, 185, 129, 0.1);
-            color: var(--secondary-color);
-        }
-
         .footer {
             text-align: center;
-            padding: 2rem 1rem;
-            color: rgba(255, 255, 255, 0.8);
-            font-size: 0.875rem;
-        }
-
-        .info-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1rem;
-            margin-bottom: 1.5rem;
-        }
-
-        .info-card {
-            background: var(--surface-dark);
-            padding: 1rem;
-            border-radius: 8px;
-            text-align: center;
-        }
-
-        .info-value {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: var(--primary-color);
-        }
-
-        .info-label {
-            font-size: 0.75rem;
-            color: var(--text-secondary);
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-
-        @media (max-width: 640px) {
-            .header h1 {
-                font-size: 2rem;
-            }
-            
-            .countdown-display {
-                font-size: 1.8rem;
-            }
-            
-            .button-group {
-                flex-direction: column;
-            }
-            
-            .container {
-                padding: 0 0.5rem 1rem;
-            }
-        }
-
-        .loading {
-            opacity: 0.6;
-            pointer-events: none;
-        }
-
-        .fade-in {
-            animation: fadeIn 0.5s ease-in-out;
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
+            margin-top: 20px;
+            font-size: 14px;
+            color: #777;
         }
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1><i class="fas fa-clock"></i> ESP32 P10 Countdown</h1>
-        <p>Configuration du compte à rebours LED</p>
-    </div>
-
     <div class="container">
-        <div class="status-indicator status-connected">
-            <i class="fas fa-wifi"></i>
-            Connecté - IP: 192.168.1.1
-        </div>
-
-        <!-- Formulaire de configuration -->
-        <form id="settingsForm" action="/settings" method="POST">
-            <!-- Configuration de la date et heure -->
-            <div class="card fade-in">
-                <div class="card-header">
-                    <h2><i class="fas fa-calendar-alt"></i> Date et Heure Cible</h2>
+        <h1>Configuration du Compte à Rebours</h1>
+        
+        <div id="countdown-preview">12:34:56</div>
+        
+        <form action="/settings" method="POST" id="settingsForm">
+            // Champ clé supprimé
+            
+            <div class="section">
+                <h2>Date et Heure Cible</h2>
+                <div class="form-group">
+                    <label for="title">Titre du Compte à Rebours:</label>
+                    <input type="text" id="title" name="title" maxlength="50" required>
                 </div>
-                <div class="card-content">
-                    <div class="form-group">
-                        <label class="form-label" for="title">Titre du Compte à Rebours</label>
-                        <input type="text" id="title" name="title" class="form-input" maxlength="50" placeholder="Entrez le titre..." required>
-                    </div>
-                    
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label class="form-label" for="date">Date</label>
-                            <input type="date" id="date" name="date" class="form-input" required>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label" for="time">Heure</label>
-                            <input type="time" id="time" name="time" class="form-input" step="1" required>
-                        </div>
-                    </div>
-                    
-                    <!-- Bouton pour cette section -->
-                    <div class="section-buttons">
-                        <button type="button" class="btn btn-primary btn-sm" onclick="saveDateTime()">
-                            <i class="fas fa-save"></i> Enregistrer Date & Heure
-                        </button>
-                    </div>
+                <div class="form-group">
+                    <label for="date">Date:</label>
+                    <input type="date" id="date" name="date" required>
+                </div>
+                <div class="form-group">
+                    <label for="time">Heure:</label>
+                    <input type="time" id="time" name="time" required step="1">
                 </div>
             </div>
-
-            <!-- Configuration de l'apparence -->
-            <div class="card fade-in">
-                <div class="card-header">
-                    <h2><i class="fas fa-palette"></i> Apparence</h2>
+            
+            <div class="section">
+                <h2>Apparence</h2>
+                <div class="form-group">
+                    <label for="fontIndex">Police:</label>
+                    <select id="fontIndex" name="fontIndex">
+                        <option value="0">Standard</option>
+                        <option value="1">Sans Serif</option>
+                        <option value="2">Sans Serif Bold</option>
+                        <option value="3">Monospace</option>
+                    </select>
                 </div>
-                <div class="card-content">
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label class="form-label" for="fontIndex">Police du Countdown</label>
-                            <select id="fontIndex" name="fontIndex" class="form-select">
-                                <option value="0">Standard</option>
-                                <option value="1">Sans Serif</option>
-                                <option value="2">Sans Serif Bold</option>
-                                <option value="3">Monospace</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label" for="endTextFontIndex">Police du Texte de Fin</label>
-                            <select id="endTextFontIndex" name="endTextFontIndex" class="form-select">
-                                <option value="0">Standard</option>
-                                <option value="1">Sans Serif</option>
-                                <option value="2">Sans Serif Bold</option>
-                                <option value="3">Monospace</option>
-                            </select>
-                        </div>
+                <div class="form-group">
+                    <label for="textSize">Taille du texte:</label>
+                    <select id="textSize" name="textSize">
+                        <option value="1">Petite</option>
+                        <option value="2" selected>Moyenne</option>
+                        <option value="3">Grande</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="colorPicker">Couleur:</label>
+                    <div class="color-picker">
+                        <input type="color" id="colorPicker" value="#00ff00">
+                        <div class="color-preview" id="colorPreview"></div>
                     </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label class="form-label" for="textSize">Taille du texte</label>
-                            <select id="textSize" name="textSize" class="form-select">
-                                <option value="1">Petite</option>
-                                <option value="2">Moyenne</option>
-                                <option value="3">Grande</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <!-- Espace pour équilibrer la mise en page -->
-                        </div>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label" for="colorPicker">Couleur d'affichage</label>
-                        <div class="color-picker-group">
-                            <input type="color" id="colorPicker" class="color-input" value="#00ff00">
-                            <div class="color-preview" id="colorPreview"></div>
-                            <span id="colorValue">#00FF00</span>
-                        </div>
-                        
-                        <div class="color-presets">
-                            <div class="color-preset" style="background-color: #00ff00;" data-color="#00ff00" title="Vert"></div>
-                            <div class="color-preset" style="background-color: #ff0000;" data-color="#ff0000" title="Rouge"></div>
-                            <div class="color-preset" style="background-color: #0000ff;" data-color="#0000ff" title="Bleu"></div>
-                            <div class="color-preset" style="background-color: #ffff00;" data-color="#ffff00" title="Jaune"></div>
-                            <div class="color-preset" style="background-color: #ff00ff;" data-color="#ff00ff" title="Magenta"></div>
-                            <div class="color-preset" style="background-color: #00ffff;" data-color="#00ffff" title="Cyan"></div>
-                            <div class="color-preset" style="background-color: #ffffff;" data-color="#ffffff" title="Blanc"></div>
-                            <div class="color-preset" style="background-color: #ffa500;" data-color="#ffa500" title="Orange"></div>
-                        </div>
-                        
-                        <input type="hidden" id="colorR" name="colorR" value="0">
-                        <input type="hidden" id="colorG" name="colorG" value="255">
-                        <input type="hidden" id="colorB" name="colorB" value="0">
-                    </div>
-                    
-                    <!-- Bouton pour cette section -->
-                    <div class="section-buttons">
-                        <button type="button" class="btn btn-primary btn-sm" onclick="saveAppearance()">
-                            <i class="fas fa-save"></i> Enregistrer Apparence
-                        </button>
-                    </div>
+                    <input type="hidden" id="colorR" name="colorR" value="0">
+                    <input type="hidden" id="colorG" name="colorG" value="255">
+                    <input type="hidden" id="colorB" name="colorB" value="0">
                 </div>
             </div>
-
-            <!-- Boutons d'action -->
-            <div class="button-group">
-                <button type="submit" class="btn btn-primary">
-                    <i class="fas fa-save"></i> Enregistrer
-                </button>
-                <button type="button" class="btn btn-secondary" onclick="loadCurrentSettings()">
-                    <i class="fas fa-refresh"></i> Actualiser
-                </button>
-                <button type="button" class="btn btn-danger" onclick="resetCountdown()">
-                    <i class="fas fa-undo"></i> Réinitialiser
-                </button>
-            </div>
+            
+            <button type="submit">Enregistrer</button>
+            <button type="button" onclick="resetCountdown()">Réinitialiser</button>
         </form>
         
-        <!-- Aperçu du compte à rebours - Déplacé en bas -->
-        <div class="card fade-in">
-            <div class="card-header">
-                <h2><i class="fas fa-eye"></i> Aperçu en temps réel</h2>
-            </div>
-            <div class="card-content">
-                <div class="countdown-preview">
-                    <div class="countdown-display" id="countdown-display">12:34:56</div>
-                    <div class="countdown-title" id="countdown-title">COUNTDOWN</div>
-                </div>
-                
-                <div class="info-grid">
-                    <div class="info-card">
-                        <div class="info-value" id="days-left">--</div>
-                        <div class="info-label">Jours restants</div>
-                    </div>
-                    <div class="info-card">
-                        <div class="info-value" id="hours-left">--</div>
-                        <div class="info-label">Heures restantes</div>
-                    </div>
-                    <div class="info-card">
-                        <div class="info-value" id="minutes-left">--</div>
-                        <div class="info-label">Minutes restantes</div>
-                    </div>
-                </div>
-            </div>
+        <div class="footer">
+            ESP32 P10 RGB Fullscreen Countdown &copy; 2025
         </div>
-    </div>
-
-    <div class="footer">
-        <p><i class="fas fa-microchip"></i> ESP32 P10 RGB Countdown &copy; 2025</p>
-        <p>Firmware version 2.0 - Interface Web moderne</p>
     </div>
 
     <script>
-        let countdownInterval;
-        let targetDate;
-
-        // Fonctions utilitaires pour les couleurs
+        // Fonctions pour convertir couleur hex en RGB
         function hexToRgb(hex) {
+            // Supprimer le # si présent
             hex = hex.replace('#', '');
+            
+            // Convertir en RGB
             const r = parseInt(hex.substring(0, 2), 16);
             const g = parseInt(hex.substring(2, 4), 16);
             const b = parseInt(hex.substring(4, 6), 16);
+            
             return {r, g, b};
         }
-
+        
+        // Fonctions pour convertir RGB en hex
         function rgbToHex(r, g, b) {
             return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
         }
-
-        function updateColorPreview(color) {
-            const rgb = hexToRgb(color);
-            document.getElementById('colorR').value = rgb.r;
-            document.getElementById('colorG').value = rgb.g;
-            document.getElementById('colorB').value = rgb.b;
-            document.getElementById('colorPreview').style.backgroundColor = color;
-            document.getElementById('countdown-display').style.color = color;
-            document.getElementById('colorValue').textContent = color.toUpperCase();
-        }
-
-        // Gestionnaires d'événements pour les couleurs
+        
+        // Mettre à jour les champs cachés RGB quand la couleur change
         document.getElementById('colorPicker').addEventListener('input', function() {
-            updateColorPreview(this.value);
+            const color = hexToRgb(this.value);
+            document.getElementById('colorR').value = color.r;
+            document.getElementById('colorG').value = color.g;
+            document.getElementById('colorB').value = color.b;
+            document.getElementById('colorPreview').style.backgroundColor = this.value;
+            document.getElementById('countdown-preview').style.color = this.value;
         });
-
-        // Couleurs prédéfinies
-        document.querySelectorAll('.color-preset').forEach(preset => {
-            preset.addEventListener('click', function() {
-                const color = this.dataset.color;
-                document.getElementById('colorPicker').value = color;
-                updateColorPreview(color);
-            });
-        });
-
-        // Mise à jour de la taille du texte
+        
+        // Mettre à jour la prévisualisation du compte à rebours
         document.getElementById('textSize').addEventListener('change', function() {
-            const sizes = {'1': '1.8rem', '2': '2.5rem', '3': '3.2rem'};
-            document.getElementById('countdown-display').style.fontSize = sizes[this.value];
+            const size = this.value;
+            document.getElementById('countdown-preview').style.fontSize = (16 + (size * 6)) + 'px';
         });
-
-        // Mise à jour du titre
-        document.getElementById('title').addEventListener('input', function() {
-            document.getElementById('countdown-title').textContent = this.value || 'COUNTDOWN';
-        });
-
-        // Mise à jour de la date/heure
-        function updateTargetDate() {
-            const date = document.getElementById('date').value;
-            const time = document.getElementById('time').value;
-            if (date && time) {
-                targetDate = new Date(date + 'T' + time);
-                updateCountdownPreview();
+        
+        // Fonction pour réinitialiser le compte à rebours
+        function resetCountdown() {
+            if (confirm("Voulez-vous vraiment réinitialiser le compte à rebours ?")) {
+                document.getElementById('settingsForm').action = "/reset";
+                document.getElementById('settingsForm').submit();
             }
         }
-
-        document.getElementById('date').addEventListener('change', updateTargetDate);
-        document.getElementById('time').addEventListener('change', updateTargetDate);
-
-        // Prévisualisation du compte à rebours en temps réel
-        function updateCountdownPreview() {
-            if (!targetDate) return;
-
+        
+        // Charger les valeurs actuelles au chargement de la page
+        window.onload = function() {
+            // Définir la date courante + 1 jour comme valeur par défaut
             const now = new Date();
-            const diff = targetDate - now;
-
-            if (diff <= 0) {
-                document.getElementById('countdown-display').textContent = '00:00:00';
-                document.getElementById('days-left').textContent = '0';
-                document.getElementById('hours-left').textContent = '0';
-                document.getElementById('minutes-left').textContent = '0';
-                return;
-            }
-
-            const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-            const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-            const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-            const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-
-            // Format d'affichage principal
-            if (days > 0) {
-                document.getElementById('countdown-display').textContent = 
-                    `${days}j ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-            } else {
-                document.getElementById('countdown-display').textContent = 
-                    `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-            }
-
-            // Informations détaillées
-            document.getElementById('days-left').textContent = days;
-            document.getElementById('hours-left').textContent = Math.floor(diff / (1000 * 60 * 60));
-            document.getElementById('minutes-left').textContent = Math.floor(diff / (1000 * 60));
-        }
-
-        // Démarrer la mise à jour du compte à rebours
-        function startCountdownPreview() {
-            if (countdownInterval) clearInterval(countdownInterval);
-            countdownInterval = setInterval(updateCountdownPreview, 1000);
-            updateCountdownPreview();
-        }
-
-        // Charger les paramètres actuels
-        function loadCurrentSettings() {
-            document.body.classList.add('loading');
+            const tomorrow = new Date(now);
+            tomorrow.setDate(tomorrow.getDate() + 1);
             
+            const dateStr = tomorrow.toISOString().split('T')[0];
+            document.getElementById('date').value = dateStr;
+            
+            const timeStr = '23:59:59';
+            document.getElementById('time').value = timeStr;
+            
+            // Charger les valeurs depuis l'ESP32
             fetch('/getSettings')
                 .then(response => response.json())
                 .then(data => {
                     document.getElementById('title').value = data.title;
                     
+                    // Format date YYYY-MM-DD
                     const dateStr = `${data.year}-${String(data.month).padStart(2, '0')}-${String(data.day).padStart(2, '0')}`;
                     document.getElementById('date').value = dateStr;
                     
+                    // Format heure HH:MM:SS
                     const timeStr = `${String(data.hour).padStart(2, '0')}:${String(data.minute).padStart(2, '0')}:${String(data.second).padStart(2, '0')}`;
                     document.getElementById('time').value = timeStr;
                     
                     document.getElementById('fontIndex').value = data.fontIndex;
-                    document.getElementById('endTextFontIndex').value = data.endTextFontIndex;
                     document.getElementById('textSize').value = data.textSize;
                     
-                    const color = rgbToHex(data.colorR, data.colorG, data.colorB);
-                    document.getElementById('colorPicker').value = color;
-                    updateColorPreview(color);
+                    // Mettre à jour la couleur
+                    const hexColor = rgbToHex(data.colorR, data.colorG, data.colorB);
+                    document.getElementById('colorPicker').value = hexColor;
+                    document.getElementById('colorPreview').style.backgroundColor = hexColor;
+                    document.getElementById('countdown-preview').style.color = hexColor;
                     
-                    // Mettre à jour le titre affiché
-                    document.getElementById('countdown-title').textContent = data.title;
+                    document.getElementById('colorR').value = data.colorR;
+                    document.getElementById('colorG').value = data.colorG;
+                    document.getElementById('colorB').value = data.colorB;
                     
-                    // Mettre à jour la taille
-                    const sizes = {'1': '1.8rem', '2': '2.5rem', '3': '3.2rem'};
-                    document.getElementById('countdown-display').style.fontSize = sizes[data.textSize];
-                    
-                    updateTargetDate();
-                    startCountdownPreview();
+                    // Mettre à jour le preview
+                    document.getElementById('countdown-preview').style.fontSize = (16 + (data.textSize * 6)) + 'px';
                 })
                 .catch(error => {
-                    console.error('Erreur lors du chargement:', error);
-                    // Valeurs par défaut
-                    const tomorrow = new Date();
-                    tomorrow.setDate(tomorrow.getDate() + 1);
-                    document.getElementById('date').value = tomorrow.toISOString().split('T')[0];
-                    document.getElementById('time').value = '23:59:00';
-                    updateTargetDate();
-                    startCountdownPreview();
-                })
-                .finally(() => {
-                    document.body.classList.remove('loading');
+                    console.error('Erreur:', error);
                 });
-        }
-
-        // Fonction pour sauvegarder seulement la date et l'heure
-        function saveDateTime() {
-            const formData = new FormData();
-            formData.append('title', document.getElementById('title').value);
-            formData.append('date', document.getElementById('date').value);
-            formData.append('time', document.getElementById('time').value);
-            
-            // Ajouter les autres valeurs actuelles pour éviter de les perdre
-            formData.append('fontIndex', document.getElementById('fontIndex').value);
-            formData.append('endTextFontIndex', document.getElementById('endTextFontIndex').value);
-            formData.append('textSize', document.getElementById('textSize').value);
-            formData.append('colorR', document.getElementById('colorR').value);
-            formData.append('colorG', document.getElementById('colorG').value);
-            formData.append('colorB', document.getElementById('colorB').value);
-            
-            saveSectionData(formData, 'Date & Heure');
-        }
-
-        // Fonction pour sauvegarder seulement l'apparence
-        function saveAppearance() {
-            const formData = new FormData();
-            formData.append('fontIndex', document.getElementById('fontIndex').value);
-            formData.append('endTextFontIndex', document.getElementById('endTextFontIndex').value);
-            formData.append('textSize', document.getElementById('textSize').value);
-            formData.append('colorR', document.getElementById('colorR').value);
-            formData.append('colorG', document.getElementById('colorG').value);
-            formData.append('colorB', document.getElementById('colorB').value);
-            
-            // Ajouter les autres valeurs actuelles pour éviter de les perdre
-            formData.append('title', document.getElementById('title').value);
-            formData.append('date', document.getElementById('date').value);
-            formData.append('time', document.getElementById('time').value);
-            
-            saveSectionData(formData, 'Apparence');
-        }
-
-        // Fonction utilitaire pour sauvegarder une section
-        function saveSectionData(formData, sectionName) {
-            fetch('/settings', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => {
-                if (response.ok) {
-                    showNotification(`${sectionName} sauvegardée avec succès !`, 'success');
-                    loadCurrentSettings(); // Recharger pour synchroniser l'aperçu
-                } else {
-                    showNotification(`Erreur lors de la sauvegarde de ${sectionName}`, 'error');
-                }
-            })
-            .catch(error => {
-                console.error('Erreur:', error);
-                showNotification(`Erreur lors de la sauvegarde de ${sectionName}`, 'error');
-            });
-        }
-
-        // Fonction pour afficher les notifications
-        function showNotification(message, type) {
-            const notification = document.createElement('div');
-            notification.className = `notification ${type}`;
-            notification.innerHTML = `
-                <i class="fas fa-${type === 'success' ? 'check' : 'exclamation-triangle'}"></i>
-                ${message}
-            `;
-            
-            // Ajouter le style si pas encore défini
-            if (!document.querySelector('style[data-notifications]')) {
-                const style = document.createElement('style');
-                style.setAttribute('data-notifications', 'true');
-                style.textContent = `
-                    .notification {
-                        position: fixed;
-                        top: 20px;
-                        right: 20px;
-                        padding: 1rem;
-                        border-radius: 8px;
-                        color: white;
-                        font-weight: 500;
-                        z-index: 1000;
-                        display: flex;
-                        align-items: center;
-                        gap: 0.5rem;
-                        animation: slideIn 0.3s ease;
-                    }
-                    .notification.success { background: var(--secondary-color); }
-                    .notification.error { background: var(--danger-color); }
-                    @keyframes slideIn {
-                        from { transform: translateX(100%); opacity: 0; }
-                        to { transform: translateX(0); opacity: 1; }
-                    }
-                `;
-                document.head.appendChild(style);
-            }
-            
-            document.body.appendChild(notification);
-            
-            setTimeout(() => {
-                notification.style.animation = 'slideIn 0.3s ease reverse';
-                setTimeout(() => notification.remove(), 300);
-            }, 3000);
-        }
-
-        // Fonction de réinitialisation
-        function resetCountdown() {
-            if (confirm('Voulez-vous vraiment réinitialiser le compte à rebours aux valeurs par défaut ?')) {
-                document.getElementById('settingsForm').action = '/reset';
-                document.getElementById('settingsForm').submit();
-            }
-        }
-
-        // Soumission du formulaire avec feedback
-        document.getElementById('settingsForm').addEventListener('submit', function(e) {
-            e.preventDefault();
-            
-            const submitBtn = this.querySelector('button[type="submit"]');
-            const originalText = submitBtn.innerHTML;
-            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enregistrement...';
-            submitBtn.disabled = true;
-            
-            const formData = new FormData(this);
-            
-            fetch('/settings', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => {
-                if (response.ok) {
-                    submitBtn.innerHTML = '<i class="fas fa-check"></i> Enregistré !';
-                    setTimeout(() => {
-                        submitBtn.innerHTML = originalText;
-                        submitBtn.disabled = false;
-                    }, 2000);
-                } else {
-                    throw new Error('Erreur de sauvegarde');
-                }
-            })
-            .catch(error => {
-                console.error('Erreur:', error);
-                submitBtn.innerHTML = '<i class="fas fa-times"></i> Erreur';
-                setTimeout(() => {
-                    submitBtn.innerHTML = originalText;
-                    submitBtn.disabled = false;
-                }, 2000);
-            });
-        });
-
-        // Initialisation au chargement
-        window.addEventListener('load', function() {
-            loadCurrentSettings();
-            
-            // Animation d'entrée des cartes
-            const cards = document.querySelectorAll('.card');
-            cards.forEach((card, index) => {
-                setTimeout(() => {
-                    card.style.opacity = '0';
-                    card.style.transform = 'translateY(20px)';
-                    card.style.transition = 'all 0.5s ease-in-out';
-                    setTimeout(() => {
-                        card.style.opacity = '1';
-                        card.style.transform = 'translateY(0)';
-                    }, 100);
-                }, index * 200);
-            });
-        });
+        };
     </script>
 </body>
 </html>
@@ -1044,13 +465,6 @@ const char MAIN_page[] PROGMEM = R"rawliteral(
 
 // Calcul du temps restant
 void updateCountdown(int &days, int &hours, int &minutes, int &seconds) {
-  // Ne pas calculer le countdown si les paramètres ne sont pas encore chargés
-  if (!settingsLoaded) {
-    days = hours = minutes = seconds = 0;
-    countdownExpired = false;
-    return;
-  }
-  
   DateTime now = rtc.now();
   
   // Vérifier si le countdown est expiré
@@ -1123,6 +537,8 @@ const GFXfont* getFontByIndex(int index) {
 
 // Affichage du compte à rebours en plein écran
 void displayFullscreenCountdown(int days, int hours, int minutes, int seconds) {
+  // Protection contre concurrence avec l'ISR d'affichage
+  portENTER_CRITICAL(&timerMux);
   display.clearDisplay();
 
   // Choisir la couleur
@@ -1144,47 +560,46 @@ void displayFullscreenCountdown(int days, int hours, int minutes, int seconds) {
 
   // Si le countdown est expiré
   if (countdownExpired) {
-    display.setFont();
-    int maxSize = 1;
-    // Afficher le titre défini par l'utilisateur
+    const GFXfont *font = getFontByIndex(fontIndex);
+    display.setFont(font); // peut être NULL => police par défaut
+    // Calcul largeur avec police choisie
     const char* endMsg = countdownTitle;
-    
-    // Appliquer la police sélectionnée pour le texte de fin
-    const GFXfont* selectedFont = getFontByIndex(endTextFontIndex);
-    display.setFont(selectedFont);
-    
-    // Recherche intelligente de la taille optimale pour le texte de fin
-    for (int s = 1; s <= 8; s++) { // Augmenter la plage de recherche
-      display.setTextSize(s);
-      int16_t x1, y1;
-      uint16_t w, h;
-      display.getTextBounds(endMsg, 0, 0, &x1, &y1, &w, &h);
-      
-      // Marges de sécurité plus petites
-      int marginX = 2;
-      int marginY = 1;
-      
-      if (w <= (TOTAL_WIDTH - marginX) && h <= (TOTAL_HEIGHT - marginY)) {
-        maxSize = s;
-      } else {
-        break;
+    int maxFittingSize = 1;
+    // Pour police par défaut seulement on applique TextSize scaling; pour GFX font on garde size=1
+    if (!font) {
+      for (int s = 1; s <= 5; s++) {
+        display.setTextSize(s);
+        int w = getTextWidth(endMsg, font);
+        int h = 8 * s;
+        if (w < TOTAL_WIDTH && h < TOTAL_HEIGHT) maxFittingSize = s;
       }
+      // Adapter selon préférence utilisateur (countdownTextSize 1..3)
+      int desiredTier = countdownTextSize; // 1 petit, 2 moyen, 3 grand
+      int chosen = maxFittingSize; // base grand
+      if (desiredTier == 1) {
+        chosen = max(1, maxFittingSize - 2);
+      } else if (desiredTier == 2) {
+        chosen = max(1, maxFittingSize - 1);
+      }
+      display.setTextSize(chosen);
+  // Calcul précis via getTextBounds
+  int16_t x1, y1; uint16_t w, h;
+  display.getTextBounds(endMsg, 0, 0, &x1, &y1, &w, &h);
+  int textX = (TOTAL_WIDTH - w) / 2 - x1;
+  int textY = (TOTAL_HEIGHT - h) / 2 - y1; // y1 souvent négatif
+  display.setCursor(textX, textY);
+    } else {
+      // GFX font: pas de variation de setTextSize fiable -> centrer simplement
+      display.setTextSize(1);
+  int16_t x1, y1; uint16_t w, h;
+  display.getTextBounds(endMsg, 0, 0, &x1, &y1, &w, &h);
+  int16_t textX = (TOTAL_WIDTH - w) / 2 - x1;
+  int16_t textY = (TOTAL_HEIGHT - h) / 2 - y1;
+  display.setCursor(textX, textY);
     }
-    
-    display.setTextSize(maxSize);
-    
-    // Calcul précis des dimensions finales
-    int16_t x1, y1;
-    uint16_t finalW, finalH;
-    display.getTextBounds(endMsg, 0, 0, &x1, &y1, &finalW, &finalH);
-    
-    // Centrage parfait
-    int textX = (TOTAL_WIDTH - finalW) / 2;
-    int textY = (TOTAL_HEIGHT - finalH) / 2 + finalH;
-    
-    display.setCursor(textX, textY);
     display.setTextColor(myRED);
     display.print(endMsg);
+    portEXIT_CRITICAL(&timerMux);
     return;
   }
 
@@ -1208,46 +623,39 @@ void displayFullscreenCountdown(int days, int hours, int minutes, int seconds) {
       break;
   }
 
-  // Recherche de la taille maximale qui rentre - Algorithme amélioré
-  // Appliquer la police sélectionnée par l'utilisateur
-  const GFXfont* selectedFont = getFontByIndex(fontIndex);
-  display.setFont(selectedFont);
-  
-  // Recherche intelligente de la taille optimale
-  maxSize = 1;
-  for (int s = 1; s <= 8; s++) { // Augmenter la plage de recherche
-    display.setTextSize(s);
-    int16_t x1, y1;
-    uint16_t w, h;
-    display.getTextBounds(countdownText, 0, 0, &x1, &y1, &w, &h);
-    
-    // Marges de sécurité plus petites pour maximiser la taille
-    int marginX = 2; // Marge horizontale minimale
-    int marginY = 1; // Marge verticale minimale
-    
-    if (w <= (TOTAL_WIDTH - marginX) && h <= (TOTAL_HEIGHT - marginY)) {
-      maxSize = s;
-    } else {
-      break; // Arrêter dès qu'on dépasse
+  const GFXfont *font = getFontByIndex(fontIndex);
+  display.setFont(font);
+  // Déterminer taille maximale (seulement pour police par défaut)
+  int maxFittingSize = 1;
+  if (!font) {
+    for (int s = 1; s <= 5; s++) {
+      display.setTextSize(s);
+      int w = getTextWidth(countdownText, font);
+      int h = 8 * s;
+      if (w < TOTAL_WIDTH && h < TOTAL_HEIGHT) maxFittingSize = s;
     }
+    int desiredTier = countdownTextSize; // 1..3
+    int chosen = maxFittingSize;
+    if (desiredTier == 1) chosen = max(1, maxFittingSize - 2);
+    else if (desiredTier == 2) chosen = max(1, maxFittingSize - 1);
+    display.setTextSize(chosen);
+  int16_t x1, y1; uint16_t w, h;
+  display.getTextBounds(countdownText, 0, 0, &x1, &y1, &w, &h);
+  textX = (TOTAL_WIDTH - w) / 2 - x1;
+  textY = (TOTAL_HEIGHT - h) / 2 - y1;
+  } else {
+    display.setTextSize(1); // scaling custom font souvent ignoré
+  int16_t x1, y1; uint16_t w, h;
+  display.getTextBounds(countdownText, 0, 0, &x1, &y1, &w, &h);
+  textX = (TOTAL_WIDTH - w) / 2 - x1;
+  textY = (TOTAL_HEIGHT - h) / 2 - y1;
   }
-  
-  display.setTextSize(maxSize);
-  
-  // Calcul précis des dimensions finales
-  int16_t x1, y1;
-  uint16_t finalW, finalH;
-  display.getTextBounds(countdownText, 0, 0, &x1, &y1, &finalW, &finalH);
-  
-  // Centrage parfait
-  textX = (TOTAL_WIDTH - finalW) / 2;
-  textY = (TOTAL_HEIGHT - finalH) / 2 + finalH; // Position de base pour GFX fonts
-  
   display.setTextColor(displayColor);
   display.setCursor(textX, textY);
   display.print(countdownText);
 
   // Le titre n'est plus affiché pendant le compte à rebours
+  portEXIT_CRITICAL(&timerMux);
 }
 
 // Chargement des paramètres depuis la mémoire flash (version thread-safe)
@@ -1255,6 +663,12 @@ void loadSettings() {
   // Utiliser un timeout pour éviter les blocages
   if (preferencesMutex == NULL || xSemaphoreTake(preferencesMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
     Serial.println("Failed to acquire preferences mutex - using defaults");
+    return;
+  }
+  // Prendre aussi le mutex countdown pour cohérence des paramètres
+  if (countdownMutex == NULL || xSemaphoreTake(countdownMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+    Serial.println("Failed to acquire countdown mutex - using defaults");
+    xSemaphoreGive(preferencesMutex);
     return;
   }
   
@@ -1279,7 +693,6 @@ void loadSettings() {
     countdownColorG = preferences.getInt("colorG", 255);
     countdownColorB = preferences.getInt("colorB", 0);
     fontIndex = preferences.getInt("fontIndex", 0);
-    endTextFontIndex = preferences.getInt("endTextFontIndex", 0);
     
     String savedTitle = preferences.getString("cd_Title", "COUNTDOWN");
     strcpy(countdownTitle, savedTitle.c_str());
@@ -1291,6 +704,7 @@ void loadSettings() {
   
   // Libérer le mutex
   xSemaphoreGive(preferencesMutex);
+  xSemaphoreGive(countdownMutex);
   
   if (success) {
     Serial.println("Settings loaded successfully");
@@ -1304,11 +718,6 @@ void loadSettings() {
   // Mise à jour de la date cible
   countdownTarget = DateTime(countdownYear, countdownMonth, countdownDay, 
                            countdownHour, countdownMinute, countdownSecond);
-  
-  // Marquer que les paramètres sont chargés
-  settingsLoaded = true;
-  
-  Serial.println("Settings loaded successfully");
 }
 
 // Sauvegarde des paramètres dans la mémoire flash (version thread-safe)
@@ -1316,6 +725,11 @@ void saveSettings() {
   // Utiliser un timeout pour éviter les blocages
   if (preferencesMutex == NULL || xSemaphoreTake(preferencesMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
     Serial.println("Failed to acquire preferences mutex - settings not saved");
+    return;
+  }
+  if (countdownMutex == NULL || xSemaphoreTake(countdownMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+    Serial.println("Failed to acquire countdown mutex - settings not saved");
+    xSemaphoreGive(preferencesMutex);
     return;
   }
   
@@ -1341,7 +755,6 @@ void saveSettings() {
     preferences.putInt("colorG", countdownColorG);
     preferences.putInt("colorB", countdownColorB);
     preferences.putInt("fontIndex", fontIndex);
-    preferences.putInt("endTextFontIndex", endTextFontIndex);
     
     preferences.putString("cd_Title", String(countdownTitle));
     
@@ -1352,6 +765,7 @@ void saveSettings() {
   
   // Libérer le mutex
   xSemaphoreGive(preferencesMutex);
+  xSemaphoreGive(countdownMutex);
   
   if (success) {
     Serial.println("Settings saved successfully");
@@ -1361,9 +775,6 @@ void saveSettings() {
     // Mise à jour de la date cible
     countdownTarget = DateTime(countdownYear, countdownMonth, countdownDay, 
                              countdownHour, countdownMinute, countdownSecond);
-                             
-    // S'assurer que les paramètres sont marqués comme chargés
-    settingsLoaded = true;
   } else {
     Serial.println("Failed to save settings");
   }
@@ -1449,8 +860,7 @@ void handleGetSettings() {
   json += "\"colorR\":" + String(countdownColorR) + ",";
   json += "\"colorG\":" + String(countdownColorG) + ",";
   json += "\"colorB\":" + String(countdownColorB) + ",";
-  json += "\"fontIndex\":" + String(fontIndex) + ",";
-  json += "\"endTextFontIndex\":" + String(endTextFontIndex);
+  json += "\"fontIndex\":" + String(fontIndex);
   json += "}";
   
   server.send(200, "application/json", json);
@@ -1461,14 +871,21 @@ void handleSettings() {
   Serial.println("\n-------------Settings");
 
   // Récupérer les valeurs de la requête
-  String title = server.arg("title");
-  String dateStr = server.arg("date");
-  String timeStr = server.arg("time");
+  String title = server.hasArg("title") ? server.arg("title") : String("");
+  String dateStr = server.hasArg("date") ? server.arg("date") : String("");
+  String timeStr = server.hasArg("time") ? server.arg("time") : String("");
+
+  if (dateStr.length() < 10 || timeStr.length() < 5) {
+    server.send(400, "text/plain", "Parametres invalides");
+    return;
+  }
   
   // Parser la date (format YYYY-MM-DD)
-  countdownYear = dateStr.substring(0, 4).toInt();
-  countdownMonth = dateStr.substring(5, 7).toInt();
-  countdownDay = dateStr.substring(8, 10).toInt();
+  // Protéger modifications
+  if (countdownMutex != NULL && xSemaphoreTake(countdownMutex, pdMS_TO_TICKS(200))) {
+    countdownYear = dateStr.substring(0, 4).toInt();
+    countdownMonth = dateStr.substring(5, 7).toInt();
+    countdownDay = dateStr.substring(8, 10).toInt();
   
   // Parser l'heure (format HH:MM:SS)
   countdownHour = timeStr.substring(0, 2).toInt();
@@ -1476,12 +893,11 @@ void handleSettings() {
   countdownSecond = timeStr.length() > 5 ? timeStr.substring(6, 8).toInt() : 0;
   
   // Récupérer les autres paramètres
-  countdownTextSize = server.arg("textSize").toInt();
-  countdownColorR = server.arg("colorR").toInt();
-  countdownColorG = server.arg("colorG").toInt();
-  countdownColorB = server.arg("colorB").toInt();
-  fontIndex = server.arg("fontIndex").toInt();
-  endTextFontIndex = server.arg("endTextFontIndex").toInt();
+  countdownTextSize = server.hasArg("textSize") ? server.arg("textSize").toInt() : countdownTextSize;
+  countdownColorR = server.hasArg("colorR") ? server.arg("colorR").toInt() : countdownColorR;
+  countdownColorG = server.hasArg("colorG") ? server.arg("colorG").toInt() : countdownColorG;
+  countdownColorB = server.hasArg("colorB") ? server.arg("colorB").toInt() : countdownColorB;
+  fontIndex = server.hasArg("fontIndex") ? server.arg("fontIndex").toInt() : fontIndex;
   
   // Limiter les valeurs
   if (countdownTextSize < 1) countdownTextSize = 1;
@@ -1490,12 +906,10 @@ void handleSettings() {
   if (fontIndex < 0) fontIndex = 0;
   if (fontIndex > 3) fontIndex = 3;
   
-  if (endTextFontIndex < 0) endTextFontIndex = 0;
-  if (endTextFontIndex > 3) endTextFontIndex = 3;
-  
   // Mettre à jour le titre
-  if (title.length() > 50) title = title.substring(0, 50);
-  strcpy(countdownTitle, title.c_str());
+    if (title.length() > 0) {
+      utf8SafeCopyTruncate(title, countdownTitle, sizeof(countdownTitle), 50);
+    }
   
   // Valider la date
   if (countdownMonth < 1) countdownMonth = 1;
@@ -1504,9 +918,19 @@ void handleSettings() {
   if (countdownDay > 31) countdownDay = 31;
   
   // Valider l'heure
-  if (countdownHour > 23) countdownHour = 23;
-  if (countdownMinute > 59) countdownMinute = 59;
-  if (countdownSecond > 59) countdownSecond = 59;
+    if (countdownHour > 23) countdownHour = 23;
+    if (countdownMinute > 59) countdownMinute = 59;
+    if (countdownSecond > 59) countdownSecond = 59;
+
+    // Recalculer couleur immédiate (affichage plus réactif)
+    countdownColor = display.color565(countdownColorR, countdownColorG, countdownColorB);
+    // Mettre à jour cible localement pour affichage avant sauvegarde
+    countdownTarget = DateTime(countdownYear, countdownMonth, countdownDay, 
+                               countdownHour, countdownMinute, countdownSecond);
+    xSemaphoreGive(countdownMutex);
+  } else {
+    Serial.println("Could not get countdown mutex in handleSettings");
+  }
   
   // Sauvegarder les paramètres (demander la sauvegarde plutôt que de la faire directement)
   saveRequested = true;
@@ -1530,18 +954,24 @@ void handleReset() {
   // Vérification clé supprimée
 
   // Réinitialiser aux valeurs par défaut
-  countdownYear = 2025;
-  countdownMonth = 12;
-  countdownDay = 31;
-  countdownHour = 23;
-  countdownMinute = 59;
-  countdownSecond = 0;
-  strcpy(countdownTitle, "COUNTDOWN");
-  countdownTextSize = 2;
-  countdownColorR = 0;
-  countdownColorG = 255;
-  countdownColorB = 0;
-  fontIndex = 0;
+  if (countdownMutex != NULL && xSemaphoreTake(countdownMutex, pdMS_TO_TICKS(200))) {
+    countdownYear = 2025;
+    countdownMonth = 12;
+    countdownDay = 31;
+    countdownHour = 23;
+    countdownMinute = 59;
+    countdownSecond = 0;
+    strcpy(countdownTitle, "COUNTDOWN");
+    countdownTextSize = 2;
+    countdownColorR = 0;
+    countdownColorG = 255;
+    countdownColorB = 0;
+    fontIndex = 0;
+    countdownColor = display.color565(countdownColorR, countdownColorG, countdownColorB);
+    countdownTarget = DateTime(countdownYear, countdownMonth, countdownDay, 
+                               countdownHour, countdownMinute, countdownSecond);
+    xSemaphoreGive(countdownMutex);
+  }
   
   // Sauvegarder les paramètres (demander la sauvegarde plutôt que de la faire directement)
   saveRequested = true;
@@ -1766,34 +1196,26 @@ void DisplayTask(void * parameter) {
   
   Serial.println("Display task started on core " + String(xPortGetCoreID()));
   
-  // Attendre que les paramètres soient chargés
-  while (!settingsLoaded) {
-    Serial.println("Waiting for settings to load...");
-    vTaskDelay(pdMS_TO_TICKS(100));
-  }
-  
-  Serial.println("Settings loaded, starting display updates");
-  
+  int prevSeconds = -1, prevMinutes = -1, prevHours = -1, prevDays = -1;
+  bool prevExpired = false;
   for(;;) {
-    // Tentative d'acquisition du mutex avec un timeout court
     if(displayMutex != NULL && xSemaphoreTake(displayMutex, pdMS_TO_TICKS(10))) {
-      int days, hours, minutes, seconds;
-      
-      // Protection contre les erreurs de calcul
+      int days=0, hours=0, minutes=0, seconds=0;
       if(countdownMutex != NULL && xSemaphoreTake(countdownMutex, pdMS_TO_TICKS(10))) {
         updateCountdown(days, hours, minutes, seconds);
         updateDisplayFormat(days, hours, minutes, seconds);
+        prevExpired = countdownExpired; // snapshot
         xSemaphoreGive(countdownMutex);
-        
-        displayFullscreenCountdown(days, hours, minutes, seconds);
-      } else {
-        // Si on ne peut pas obtenir le mutex, afficher un état par défaut
-        displayFullscreenCountdown(0, 0, 0, 0);
       }
-      
+      bool secondChanged = (seconds != prevSeconds) || (minutes != prevMinutes) || (hours != prevHours) || (days != prevDays);
+      bool needDraw = secondChanged || blinkLastSeconds || countdownExpired != prevExpired;
+      if (needDraw) {
+        displayFullscreenCountdown(days, hours, minutes, seconds);
+        prevSeconds = seconds; prevMinutes = minutes; prevHours = hours; prevDays = days; prevExpired = countdownExpired;
+      }
       xSemaphoreGive(displayMutex);
     }
-    vTaskDelay(pdMS_TO_TICKS(50)); // Rafraîchissement toutes les 50ms
+    vTaskDelay(pdMS_TO_TICKS(blinkLastSeconds ? 50 : 150)); // Moins de rafraîchissements hors clignotement
   }
 }
 
@@ -1819,7 +1241,7 @@ void CountdownTask(void * parameter) {
   
   for(;;) {
     // Vérifier s'il faut sauvegarder les paramètres (avec délai de sécurité)
-    if (saveRequested && (millis() - saveRequestTime) > 100) {  // Attendre 100ms après la requête
+  if (saveRequested && (millis() - saveRequestTime) > 1500) {  // Débounce 1.5s après dernière modif
       saveRequested = false;
       // Attendre un peu plus pour s'assurer que le contexte web est terminé
       vTaskDelay(pdMS_TO_TICKS(50));

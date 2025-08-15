@@ -399,7 +399,7 @@ void loadSettings() {
   // Paramètres du countdown
   countdown_Active = preferences.getBool("cd_Active", false);
   countdown_Year = preferences.getInt("cd_Year", 2025);
-  countdown_Month = preferences.getInt("cd_Year", 12);
+  countdown_Month = preferences.getInt("cd_Month", 12);
   countdown_Day = preferences.getInt("cd_Day", 31);
   countdown_Hour = preferences.getInt("cd_Hour", 23);
   countdown_Minute = preferences.getInt("cd_Minute", 59);
@@ -658,7 +658,7 @@ void handleSettings() {
   else if (incoming_Settings == "setCountdown") {
     countdown_Active = server.arg("countdown_Active") == "true";
     countdown_Year = server.arg("countdown_Year").toInt();
-    countdown_Month = server.arg("countdown_Year").toInt();
+  countdown_Month = server.arg("countdown_Month").toInt();
     countdown_Day = server.arg("countdown_Day").toInt();
     countdown_Hour = server.arg("countdown_Hour").toInt();
     countdown_Minute = server.arg("countdown_Minute").toInt();
