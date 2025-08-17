@@ -46,6 +46,8 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
+#include "nvs_flash.h"
+#include "esp_err.h"
 
 // Version firmware (uniformisé avec main)
 static const char* FIRMWARE_VERSION = "1.0.0"; // garder synchro avec src/main.cpp
@@ -154,6 +156,100 @@ uint16_t myORANGE   = display.color565(255, 165, 0);
 void IRAM_ATTR display_updater();
 void display_update_enable(bool is_enable); // prototype pour usage anticipé
 
+// Fonction de vérification de la sanité des mutex
+bool checkMutexSanity() {
+  // Vérifier que les mutex sont valides
+  if (displayMutex == NULL || countdownMutex == NULL || preferencesMutex == NULL) {
+    Serial.println("ERROR: One or more mutex is NULL!");
+    return false;
+  }
+  
+  // Vérifier l'état du scheduler
+  if (xTaskGetSchedulerState() != taskSCHEDULER_RUNNING) {
+    Serial.println("WARNING: Scheduler not running");
+    return false;
+  }
+  
+  // Vérifier que nous ne sommes pas dans une ISR
+  if (xPortInIsrContext()) {
+    Serial.println("WARNING: In ISR context");
+    return false;
+  }
+  
+  return true;
+}
+
+// Fonction de récupération d'urgence en cas de corruption
+void emergencyRecovery() {
+  Serial.println("EMERGENCY RECOVERY: System corruption detected");
+  
+  // Arrêter tous les timers
+  if (timer != nullptr) {
+    timerEnd(timer);
+    timer = nullptr;
+  }
+  
+  // Arrêter toutes les tâches
+  if (displayTaskHandle != NULL) {
+    vTaskDelete(displayTaskHandle);
+    displayTaskHandle = NULL;
+  }
+  if (countdownTaskHandle != NULL) {
+    vTaskDelete(countdownTaskHandle);
+    countdownTaskHandle = NULL;
+  }
+  if (networkTaskHandle != NULL) {
+    vTaskDelete(networkTaskHandle);
+    networkTaskHandle = NULL;
+  }
+  
+  // Nettoyage des mutex
+  if (displayMutex != NULL) {
+    vSemaphoreDelete(displayMutex);
+    displayMutex = NULL;
+  }
+  if (countdownMutex != NULL) {
+    vSemaphoreDelete(countdownMutex);
+    countdownMutex = NULL;
+  }
+  if (preferencesMutex != NULL) {
+    vSemaphoreDelete(preferencesMutex);
+    preferencesMutex = NULL;
+  }
+  
+  // Délai avant redémarrage
+  delay(1000);
+  
+  // Redémarrage du système
+  ESP.restart();
+}
+
+// Fonction de réparation de la corruption NVS
+void repairNVSCorruption() {
+  Serial.println("Attempting NVS corruption repair...");
+  
+  // Fermer toutes les instances de preferences ouvertes
+  preferences.end();
+  
+  // Attendre un peu
+  delay(100);
+  
+  // Essayer de vider et réinitialiser la partition NVS
+  esp_err_t err = nvs_flash_erase();
+  if (err == ESP_OK) {
+    Serial.println("NVS partition erased successfully");
+    err = nvs_flash_init();
+    if (err == ESP_OK) {
+      Serial.println("NVS partition reinitialized successfully");
+      return;
+    }
+  }
+  
+  Serial.println("NVS repair failed - will restart");
+  delay(1000);
+  ESP.restart();
+}
+
 // Utilitaire : copie tronquée en respectant les limites UTF-8 (nombre de caractères et non octets)
 // maxChars : nombre maximum de caractères (glyphes) à conserver (excluant le nul final)
 // destSize : taille du buffer destination (incluant place pour nul)
@@ -224,7 +320,43 @@ public:
 #define MUTEX_GUARD(mutex, timeout) MutexGuard guard_##mutex(mutex, timeout)
 #define MUTEX_GUARD_CHECK(mutex, timeout) MutexGuard guard_##mutex(mutex, timeout); if (!guard_##mutex.isLocked())
 
-// === Constantes optimisées pour les timeouts ===
+// Watchdog pour surveiller la sanité du système
+unsigned long lastWatchdogTime = 0;
+int corruptionCounter = 0;
+
+void systemWatchdog() {
+  unsigned long now = millis();
+  
+  // Exécuter toutes les 30 secondes
+  if (now - lastWatchdogTime > 30000) {
+    lastWatchdogTime = now;
+    
+    // Vérifier la sanité des mutex
+    if (!checkMutexSanity()) {
+      corruptionCounter++;
+      Serial.printf("System corruption detected #%d\n", corruptionCounter);
+      
+      // Si corruption répétée, déclencher une récupération d'urgence
+      if (corruptionCounter >= 3) {
+        Serial.println("Too many corruptions - triggering emergency recovery");
+        emergencyRecovery();
+      }
+    } else {
+      // Réinitialiser le compteur si tout va bien
+      corruptionCounter = 0;
+    }
+    
+    // Vérifier l'état des tâches
+    if (displayTaskHandle == NULL || countdownTaskHandle == NULL || networkTaskHandle == NULL) {
+      Serial.println("One or more tasks missing - system instability detected");
+      corruptionCounter++;
+    }
+    
+    // Imprimer les statistiques de mémoire
+    Serial.printf("Free heap: %d bytes, Min free: %d bytes\n", 
+                  ESP.getFreeHeap(), ESP.getMinFreeHeap());
+  }
+}
 #define MUTEX_TIMEOUT_FAST     pdMS_TO_TICKS(50)   // Opérations rapides
 #define MUTEX_TIMEOUT_NORMAL   pdMS_TO_TICKS(200)  // Opérations normales
 #define MUTEX_TIMEOUT_SLOW     pdMS_TO_TICKS(1000) // Opérations lentes (I/O)
@@ -1196,28 +1328,44 @@ void loadSettings() {
   display.setBrightness(effectiveBrightness);
 }
 
-// Sauvegarde des paramètres dans la mémoire flash (version thread-safe)
+// Sauvegarde des paramètres dans la mémoire flash (version thread-safe optimisée)
 void saveSettings() {
   Serial.println("Saving settings to NVS...");
   
-  // Tentative simple d'acquisition des mutex avec vérification du scheduler
-  if (xTaskGetSchedulerState() != taskSCHEDULER_RUNNING) {
-    Serial.println("Scheduler not running - delaying save");
+  // Vérifications de sécurité préliminaires
+  if (!checkMutexSanity()) {
+    Serial.println("Mutex sanity check failed - aborting save");
     return;
   }
   
-  // Tentative d'acquisition des mutex avec timeout court
-  if (preferencesMutex && xSemaphoreTake(preferencesMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+  // Désactiver temporairement le timer d'affichage pour éviter les conflits
+  bool timerWasEnabled = (timer != nullptr);
+  if (timerWasEnabled) {
+    display_update_enable(false);
+    vTaskDelay(pdMS_TO_TICKS(10)); // Attendre que l'IRQ se termine
+  }
+  
+  // Tentative d'acquisition des mutex avec timeout très court pour éviter les blocages
+  if (preferencesMutex && xSemaphoreTake(preferencesMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
     
-    bool prefsStarted = preferences.begin("countdown", false);
+    bool prefsStarted = false;
+    
+    // Retry logic pour preferences.begin()
+    for (int retry = 0; retry < 3 && !prefsStarted; retry++) {
+      prefsStarted = preferences.begin("countdown", false);
+      if (!prefsStarted) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+      }
+    }
+    
     if (prefsStarted) {
       // Paramètres du countdown - capture des valeurs locales pour éviter les races
       int year, month, day, hour, minute, second;
       int colorR, colorG, colorB;
       int fStyle;
       
-      // Acquisition rapide du mutex countdown pour capturer les valeurs
-      if (countdownMutex && xSemaphoreTake(countdownMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+      // Acquisition TRÈS rapide du mutex countdown pour capturer les valeurs
+      if (countdownMutex && xSemaphoreTake(countdownMutex, pdMS_TO_TICKS(20)) == pdTRUE) {
         year = countdownYear;
         month = countdownMonth;
         day = countdownDay;
@@ -1230,8 +1378,8 @@ void saveSettings() {
         fStyle = fontStyle;
         xSemaphoreGive(countdownMutex);
       } else {
-        // Si on ne peut pas obtenir le mutex, utiliser les valeurs par défaut
-        Serial.println("Could not acquire countdown mutex - using current values");
+        // Fallback sans mutex - utiliser les valeurs directement (atomic reads sur ESP32)
+        Serial.println("Mutex timeout - using direct read (atomic)");
         year = countdownYear;
         month = countdownMonth;
         day = countdownDay;
@@ -1244,53 +1392,65 @@ void saveSettings() {
         fStyle = fontStyle;
       }
       
-      // Sauvegarde sans mutex actif
-      preferences.putInt("cd_Year", year);
-      preferences.putInt("cd_Month", month);
-      preferences.putInt("cd_Day", day);
-      preferences.putInt("cd_Hour", hour);
-      preferences.putInt("cd_Minute", minute);
-      preferences.putInt("cd_Second", second);
-      
-      // Paramètres d'affichage - style de police et couleur
-      preferences.putInt("fontStyle", fStyle);
-      preferences.putInt("colorR", colorR);
-      preferences.putInt("colorG", colorG);
-      preferences.putInt("colorB", colorB);
-      preferences.putBool("blinkEn", blinkEnabled);
-      preferences.putInt("blinkInt", blinkIntervalMs);
-      preferences.putInt("blinkWin", blinkWindowSeconds);
-      preferences.putBool("mqEn", marqueeEnabled);
-      preferences.putInt("mqInt", marqueeIntervalMs);
-      preferences.putInt("mqGap", marqueeGap);
-      preferences.putInt("mqMode", marqueeMode);
-      preferences.putInt("mqRetInt", marqueeReturnIntervalMs);
-      preferences.putInt("mqPL", marqueeBouncePauseLeftMs);
-      preferences.putInt("mqPR", marqueeBouncePauseRightMs);
-      preferences.putInt("mqOsDelay", marqueeOneShotDelayMs);
-      preferences.putBool("mqOsStopC", marqueeOneShotStopCenter);
-      preferences.putInt("mqOsRst", marqueeOneShotRestartSec);
-      preferences.putBool("mqAccEn", marqueeAccelEnabled);
-      preferences.putInt("mqAccSt", marqueeAccelStartIntervalMs);
-      preferences.putInt("mqAccEnd", marqueeAccelEndIntervalMs);
-      preferences.putInt("mqAccDur", marqueeAccelDurationMs);
-      preferences.putInt("bright", displayBrightness);
-      
-      preferences.putString("cd_Title", String(countdownTitle));
+      // Sauvegarde optimisée - grouper les écritures pour réduire les opérations NVS
+      try {
+        preferences.putInt("cd_Year", year);
+        preferences.putInt("cd_Month", month);
+        preferences.putInt("cd_Day", day);
+        preferences.putInt("cd_Hour", hour);
+        preferences.putInt("cd_Minute", minute);
+        preferences.putInt("cd_Second", second);
+        
+        // Paramètres d'affichage - style de police et couleur
+        preferences.putInt("fontStyle", fStyle);
+        preferences.putInt("colorR", colorR);
+        preferences.putInt("colorG", colorG);
+        preferences.putInt("colorB", colorB);
+        preferences.putBool("blinkEn", blinkEnabled);
+        preferences.putInt("blinkInt", blinkIntervalMs);
+        preferences.putInt("blinkWin", blinkWindowSeconds);
+        preferences.putBool("mqEn", marqueeEnabled);
+        preferences.putInt("mqInt", marqueeIntervalMs);
+        preferences.putInt("mqGap", marqueeGap);
+        preferences.putInt("mqMode", marqueeMode);
+        preferences.putInt("mqRetInt", marqueeReturnIntervalMs);
+        preferences.putInt("mqPL", marqueeBouncePauseLeftMs);
+        preferences.putInt("mqPR", marqueeBouncePauseRightMs);
+        preferences.putInt("mqOsDelay", marqueeOneShotDelayMs);
+        preferences.putBool("mqOsStopC", marqueeOneShotStopCenter);
+        preferences.putInt("mqOsRst", marqueeOneShotRestartSec);
+        preferences.putBool("mqAccEn", marqueeAccelEnabled);
+        preferences.putInt("mqAccSt", marqueeAccelStartIntervalMs);
+        preferences.putInt("mqAccEnd", marqueeAccelEndIntervalMs);
+        preferences.putInt("mqAccDur", marqueeAccelDurationMs);
+        preferences.putInt("bright", displayBrightness);
+        
+        preferences.putString("cd_Title", String(countdownTitle));
+        
+        Serial.println("Settings saved successfully");
+        
+        // Mise à jour de la couleur et de la date cible en dehors du contexte NVS
+        countdownColor = display.color565(colorR, colorG, colorB);
+        countdownTarget = DateTime(year, month, day, hour, minute, second);
+        
+      } catch (...) {
+        Serial.println("Exception during NVS write - data may be corrupted");
+      }
       
       preferences.end();
-      Serial.println("Settings saved successfully");
-      
-      // Mise à jour de la couleur et de la date cible
-      countdownColor = display.color565(colorR, colorG, colorB);
-      countdownTarget = DateTime(year, month, day, hour, minute, second);
     } else {
-      Serial.println("Failed to begin preferences");
+      Serial.println("Failed to begin preferences after retries");
     }
     
     xSemaphoreGive(preferencesMutex);
   } else {
     Serial.println("Could not acquire preferences mutex - save skipped");
+  }
+  
+  // Réactiver le timer d'affichage si nécessaire
+  if (timerWasEnabled) {
+    vTaskDelay(pdMS_TO_TICKS(5)); // Petit délai avant réactivation
+    display_update_enable(true);
   }
 }
 
@@ -1675,8 +1835,16 @@ void prepare_and_start_The_Server() {
 
 // Fonction de callback pour le timer d'affichage
 void IRAM_ATTR display_updater() {
+  // Vérification rapide de la validité avant d'entrer en section critique
+  if (timer == nullptr) {
+    return; // Timer désactivé
+  }
+  
   portENTER_CRITICAL_ISR(&timerMux);
-  display.display(display_draw_time);
+  // Double vérification dans la section critique
+  if (timer != nullptr) {
+    display.display(display_draw_time);
+  }
   portEXIT_CRITICAL_ISR(&timerMux);
 }
 
@@ -1912,10 +2080,18 @@ void CountdownTask(void * parameter) {
     // Vérifier s'il faut sauvegarder les paramètres (avec délai de sécurité)
     if (saveRequested && (millis() - saveRequestTime) > 1500) {  // Débounce 1.5s après dernière modif
       saveRequested = false;
-      // Attendre un peu plus pour s'assurer que le contexte web est terminé
-      vTaskDelay(pdMS_TO_TICKS(50));
-      saveSettings();
-      Serial.println("Settings saved from CountdownTask");
+      
+      // Vérifications de sécurité avant sauvegarde
+      if (xTaskGetSchedulerState() == taskSCHEDULER_RUNNING && !xPortInIsrContext()) {
+        // Attendre un peu plus pour s'assurer que le contexte web est terminé
+        vTaskDelay(pdMS_TO_TICKS(100));
+        saveSettings();
+        Serial.println("Settings saved from CountdownTask");
+      } else {
+        Serial.println("Unsafe context - delaying save");
+        saveRequested = true; // Re-programmer la sauvegarde
+        saveRequestTime = millis() + 500; // Dans 500ms
+      }
     }
     
     // Utiliser MUTEX_GUARD avec timeout optimisé
@@ -1939,7 +2115,9 @@ void CountdownTask(void * parameter) {
 // Ancienne NetworkTask fusionnée dans NetWebTask
 
 void loop() {
-  // Pause pour éviter les problèmes de watchdog
+  // Surveillance du système et pause pour éviter les problèmes de watchdog
+  systemWatchdog();
+  
   // Les tâches FreeRTOS gèrent tout le travail
   vTaskDelay(pdMS_TO_TICKS(1000));
 }
