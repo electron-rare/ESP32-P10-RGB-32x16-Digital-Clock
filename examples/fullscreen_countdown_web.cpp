@@ -548,6 +548,14 @@ int countdownColorR = 0;
 int countdownColorG = 255;
 int countdownColorB = 0;
 uint16_t countdownColor;
+
+// Paramètres du message de fin
+int endMessageColorR = 255;
+int endMessageColorG = 215;
+int endMessageColorB = 0;
+uint16_t endMessageColor;
+int endMessageEffect = 0; // 0=static, 1=blink, 2=fade, 3=rainbow
+
 int displayBrightness = -1; // -1 = auto (calculé selon nombre de panneaux)
 
 // Format d'affichage (0=jours, 1=heures, 2=minutes, 3=secondes uniquement)
@@ -576,9 +584,17 @@ form .field { display:flex; flex-direction:column; gap:4px; }
 label { font-size:.70rem; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); }
 input:not([type=color]), select { background:#0d1418; border:1px solid #233038; border-radius:8px; padding:10px 11px; font:inherit; color:var(--text); outline:none; transition:.2s border-color,.2s background; }
 input:focus, select:focus { border-color:var(--accent); background:#111b20; }
-.color-input-group { display:flex; align-items:center; gap:8px; }
-.color-input-group input[type=color] { border:none; background:transparent; width:42px; height:42px; padding:0; cursor:pointer; border-radius:6px; }
-.color-preview { width:42px; height:42px; border-radius:6px; border:2px solid #333; background:var(--preview-color,#00ff00); box-shadow:0 0 0 1px rgba(255,255,255,.1); }
+.color-input-group { display:flex; align-items:center; gap:12px; }
+.color-wheel-container { position:relative; width:120px; height:120px; }
+.color-wheel { width:120px; height:120px; border-radius:50%; background:conic-gradient(from 0deg, #ff0000 0deg, #ffff00 60deg, #00ff00 120deg, #00ffff 180deg, #0000ff 240deg, #ff00ff 300deg, #ff0000 360deg); cursor:crosshair; position:relative; border:3px solid #333; box-shadow:0 4px 12px rgba(0,0,0,0.3); }
+.color-wheel-inner { width:40px; height:40px; border-radius:50%; background:radial-gradient(circle, rgba(255,255,255,1) 0%, rgba(255,255,255,0) 70%); position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); pointer-events:none; }
+.color-wheel-cursor { width:16px; height:16px; border:3px solid #fff; border-radius:50%; position:absolute; transform:translate(-50%, -50%); pointer-events:none; box-shadow:0 2px 6px rgba(0,0,0,0.4); transition:all 0.1s ease; }
+.color-preview { width:60px; height:60px; border-radius:12px; border:3px solid #333; background:var(--preview-color,#00ff00); box-shadow:0 2px 8px rgba(0,0,0,.3); position:relative; }
+.color-preview::after { content:''; position:absolute; inset:3px; border-radius:8px; background:inherit; }
+.auto-save-indicator { position:fixed; top:20px; right:20px; background:var(--panel); padding:8px 16px; border-radius:8px; font-size:0.8rem; color:var(--accent); box-shadow:0 4px 12px rgba(0,0,0,0.3); transform:translateX(100%); opacity:0; transition:all 0.3s ease; z-index:1000; }
+.auto-save-indicator.show { transform:translateX(0); opacity:1; }
+.auto-save-indicator.success { color:var(--ok); }
+.auto-save-indicator.error { color:var(--danger); }
 .inline { display:flex; gap:10px; }
 .inline > * { flex:1; }
 .actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:8px; }
@@ -616,6 +632,7 @@ footer { margin:40px 0 10px; text-align:center; font-size:.6rem; letter-spacing:
 @media (max-width:680px){ .row-2 { grid-template-columns:repeat(auto-fit,minmax(100px,1fr)); } }
 </style>
 </head><body>
+<div class="auto-save-indicator" id="autoSaveIndicator">💾 Sauvegarde automatique...</div>
 <div class="wrap grid" style="gap:18px;">
   <div class="card preview-panel" id="previewCard">
     <div class="save-indicator" id="saveState"><span class="dot"></span><span id="saveLabel">PRÊT</span></div>
@@ -639,7 +656,8 @@ footer { margin:40px 0 10px; text-align:center; font-size:.6rem; letter-spacing:
       <div class="grid" style="gap:16px;">
         <div class="field">
           <label for="title">📝 Titre du countdown</label>
-          <input id="title" name="title" maxlength="50" required placeholder="NOUVEL AN 2026" />
+          <input id="title" name="title" maxlength="50" required placeholder="BONNE ANNÉE 2026" />
+          <small style="color:var(--muted); font-size:0.7rem; margin-top:4px;">Ce texte s'affiche quand le countdown se termine</small>
         </div>
         
         <div class="field-group">
@@ -662,9 +680,14 @@ footer { margin:40px 0 10px; text-align:center; font-size:.6rem; letter-spacing:
               </select>
             </div>
             <div class="field">
-              <label for="colorPicker">Couleur</label>
+              <label for="colorWheel">Couleur</label>
               <div class="color-input-group">
-                <input type="color" id="colorPicker" value="#00ff00" />
+                <div class="color-wheel-container">
+                  <div class="color-wheel" id="colorWheel">
+                    <div class="color-wheel-inner"></div>
+                    <div class="color-wheel-cursor" id="colorCursor"></div>
+                  </div>
+                </div>
                 <div class="color-preview" id="colorPreview"></div>
               </div>
             </div>
@@ -673,32 +696,45 @@ footer { margin:40px 0 10px; text-align:center; font-size:.6rem; letter-spacing:
         </div>
       </div>
       
+      <!-- Section Style du message de fin -->
+      <div class="card">
+        <h3>🎨 Style du message de fin</h3>
+        <p>Personnalisez l'apparence du titre quand le countdown se termine</p>
+        
+        <div class="grid-2">
+          <div class="field">
+            <label for="endEffect">✨ Effet d'affichage</label>
+            <select id="endEffect" name="endEffect">
+              <option value="static">🔴 Statique</option>
+              <option value="blink">💫 Clignotant</option>
+              <option value="fade">🌊 Fade in/out</option>
+              <option value="rainbow">🌈 Arc-en-ciel</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="endColorWheel">Couleur du message</label>
+            <div class="color-input-group">
+              <div class="color-wheel-container">
+                <div class="color-wheel" id="endColorWheel">
+                  <div class="color-wheel-inner"></div>
+                  <div class="color-wheel-cursor" id="endColorCursor"></div>
+                </div>
+              </div>
+              <div class="color-preview" id="endColorPreview"></div>
+            </div>
+          </div>
+        </div>
+        <div class="swatches" id="endSwatches"></div>
+      </div>
+      
       <!-- Champs cachés pour la soumission -->
       <input type="hidden" id="colorR" name="colorR" value="0" />
       <input type="hidden" id="colorG" name="colorG" value="255" />
       <input type="hidden" id="colorB" name="colorB" value="0" />
+      <input type="hidden" id="endColorR" name="endColorR" value="255" />
+      <input type="hidden" id="endColorG" name="endColorG" value="215" />
+      <input type="hidden" id="endColorB" name="endColorB" value="0" />
     </form>
-  </div>
-  
-  <!-- Section Texte de fin -->
-  <div class="card">
-    <h2>🎯 Message de fin</h2>
-    <div class="field-group">
-      <label>📄 Texte affiché quand le countdown se termine</label>
-      <div class="inline">
-        <div class="field">
-          <input id="endMessage" name="endMessage" maxlength="50" placeholder="BONNE ANNÉE !" />
-        </div>
-        <div class="field">
-          <label for="endColorPicker">Couleur</label>
-          <div class="color-input-group">
-            <input type="color" id="endColorPicker" value="#ff0000" />
-            <div class="color-preview" id="endColorPreview"></div>
-          </div>
-        </div>
-      </div>
-      <div class="swatches" id="endSwatches"></div>
-    </div>
   </div>
   
   <!-- Boutons d'action principaux -->
@@ -840,6 +876,165 @@ const saveState = el('saveState');
 const saveLabel = el('saveLabel');
 const toast = el('toast');
 const swatchesBox = el('swatches');
+const autoSaveIndicator = el('autoSaveIndicator');
+
+// === Gestion de la sauvegarde automatique ===
+let autoSaveTimeout = null;
+let isAutoSaving = false;
+
+function showAutoSaveIndicator(message, type = 'info') {
+  autoSaveIndicator.textContent = message;
+  autoSaveIndicator.className = `auto-save-indicator show ${type}`;
+  setTimeout(() => {
+    autoSaveIndicator.classList.remove('show');
+  }, 2000);
+}
+
+function triggerAutoSave() {
+  if (autoSaveTimeout) clearTimeout(autoSaveTimeout);
+  
+  autoSaveTimeout = setTimeout(() => {
+    if (!isAutoSaving) {
+      performAutoSave();
+    }
+  }, 1500); // Attendre 1.5s après la dernière modification
+}
+
+function performAutoSave() {
+  isAutoSaving = true;
+  showAutoSaveIndicator('💾 Sauvegarde en cours...', 'info');
+  
+  const formData = new FormData(el('settingsForm'));
+  
+  fetch('/settings', {
+    method: 'POST',
+    body: formData
+  })
+  .then(r => r.text())
+  .then(() => {
+    showAutoSaveIndicator('✅ Sauvegardé automatiquement', 'success');
+    isAutoSaving = false;
+  })
+  .catch(() => {
+    showAutoSaveIndicator('❌ Erreur de sauvegarde', 'error');
+    isAutoSaving = false;
+  });
+}
+
+// === Classe pour gérer les roues de couleur ===
+class ColorWheel {
+  constructor(wheelId, cursorId, previewId, onColorChange) {
+    this.wheel = el(wheelId);
+    this.cursor = el(cursorId);
+    this.preview = el(previewId);
+    this.onColorChange = onColorChange;
+    this.isDragging = false;
+    this.currentColor = '#00ff00';
+    
+    this.setupEvents();
+    this.setColor('#00ff00');
+  }
+  
+  setupEvents() {
+    this.wheel.addEventListener('mousedown', (e) => this.startDrag(e));
+    this.wheel.addEventListener('touchstart', (e) => this.startDrag(e));
+    document.addEventListener('mousemove', (e) => this.drag(e));
+    document.addEventListener('touchmove', (e) => this.drag(e));
+    document.addEventListener('mouseup', () => this.stopDrag());
+    document.addEventListener('touchend', () => this.stopDrag());
+  }
+  
+  startDrag(e) {
+    this.isDragging = true;
+    this.updateColor(e);
+    e.preventDefault();
+  }
+  
+  drag(e) {
+    if (!this.isDragging) return;
+    this.updateColor(e);
+    e.preventDefault();
+  }
+  
+  stopDrag() {
+    this.isDragging = false;
+  }
+  
+  updateColor(e) {
+    const rect = this.wheel.getBoundingClientRect();
+    const centerX = rect.width / 2;
+    const centerY = rect.height / 2;
+    
+    let x, y;
+    if (e.touches) {
+      x = e.touches[0].clientX - rect.left - centerX;
+      y = e.touches[0].clientY - rect.top - centerY;
+    } else {
+      x = e.clientX - rect.left - centerX;
+      y = e.clientY - rect.top - centerY;
+    }
+    
+    const angle = Math.atan2(y, x) * 180 / Math.PI;
+    const distance = Math.min(Math.sqrt(x*x + y*y), centerX - 10);
+    
+    // Convertir l'angle en couleur HSV
+    let hue = (angle + 360) % 360;
+    const saturation = Math.min(distance / (centerX - 10), 1) * 100;
+    const value = 100;
+    
+    // Convertir HSV en RGB
+    const rgb = this.hsvToRgb(hue, saturation, value);
+    const color = `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`;
+    const hex = this.rgbToHex(rgb.r, rgb.g, rgb.b);
+    
+    this.currentColor = hex;
+    this.setColor(hex);
+    
+    // Position du curseur
+    const cursorX = centerX + Math.cos(angle * Math.PI / 180) * distance;
+    const cursorY = centerY + Math.sin(angle * Math.PI / 180) * distance;
+    this.cursor.style.left = cursorX + 'px';
+    this.cursor.style.top = cursorY + 'px';
+    
+    if (this.onColorChange) {
+      this.onColorChange(hex, rgb);
+    }
+  }
+  
+  setColor(hex) {
+    this.currentColor = hex;
+    this.preview.style.backgroundColor = hex;
+    this.preview.style.setProperty('--preview-color', hex);
+  }
+  
+  hsvToRgb(h, s, v) {
+    h /= 360;
+    s /= 100;
+    v /= 100;
+    
+    const c = v * s;
+    const x = c * (1 - Math.abs(((h * 6) % 2) - 1));
+    const m = v - c;
+    
+    let r, g, b;
+    if (h < 1/6) { r = c; g = x; b = 0; }
+    else if (h < 2/6) { r = x; g = c; b = 0; }
+    else if (h < 3/6) { r = 0; g = c; b = x; }
+    else if (h < 4/6) { r = 0; g = x; b = c; }
+    else if (h < 5/6) { r = x; g = 0; b = c; }
+    else { r = c; g = 0; b = x; }
+    
+    return {
+      r: Math.round((r + m) * 255),
+      g: Math.round((g + m) * 255),
+      b: Math.round((b + m) * 255)
+    };
+  }
+  
+  rgbToHex(r, g, b) {
+    return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+  }
+}
 
 // === Création de la matrice LED ===
 const MATRIX_WIDTH = 96; // 3 panneaux de 32px
@@ -919,10 +1114,8 @@ function drawTextOnMatrix(text, color) {
 const SWATCHES = ['#00ff00','#ffffff','#ff0000','#00bcd4','#ffeb3b','#ff9800','#ff00ff','#2196f3','#9c27b0','#4caf50'];
 
 // Fonction pour créer les swatches
-function createSwatches(containerId, inputId, previewId) {
+function createSwatches(containerId, colorWheel) {
   const container = el(containerId);
-  const input = el(inputId);
-  const preview = el(previewId);
   
   container.innerHTML = '';
   SWATCHES.forEach(color => {
@@ -932,20 +1125,15 @@ function createSwatches(containerId, inputId, previewId) {
     swatch.dataset.color = color;
     swatch.title = color;
     swatch.addEventListener('click', () => {
-      input.value = color;
-      updateColorPreview(input, preview);
-      if(containerId === 'swatches') updateColor(color, true);
-      else showToast('Couleur appliquée');
+      colorWheel.setColor(color);
+      if (colorWheel.onColorChange) {
+        const rgb = hexToRgb(color);
+        colorWheel.onColorChange(color, rgb);
+      }
+      showToast('Couleur appliquée');
     });
     container.appendChild(swatch);
   });
-}
-
-// Fonction pour mettre à jour la prévisualisation de couleur
-function updateColorPreview(input, preview) {
-  const color = input.value;
-  preview.style.setProperty('--preview-color', color);
-  preview.style.backgroundColor = color;
 }
 
 // === Variables de logique ===
@@ -957,7 +1145,18 @@ function showToast(msg,ok=true){toast.textContent=msg;toast.classList.add('show'
 
 function setSaving(active,label){if(active){saveState.classList.add('active');saveLabel.textContent=label||'SAUVEGARDE';}else{saveState.classList.remove('active');saveLabel.textContent=label||'PRÊT';}}
 
-function updateColor(val,fromSwatch=false){const {r,g,b}=hexToRgb(val); el('colorR').value=r; el('colorG').value=g; el('colorB').value=b; document.querySelectorAll('.swatch').forEach(s=>s.classList.toggle('active',s.dataset.color===val)); if(fromSwatch){showToast('Couleur appliquée');} updateLedPreview();}
+function updateColor(val,fromSwatch=false){
+  const {r,g,b}=hexToRgb(val); 
+  el('colorR').value=r; 
+  el('colorG').value=g; 
+  el('colorB').value=b; 
+  document.querySelectorAll('.swatch').forEach(s=>s.classList.toggle('active',s.dataset.color===val)); 
+  if(fromSwatch){showToast('Couleur appliquée');} 
+  updateLedPreview();
+  if (mainColorWheel) {
+    mainColorWheel.setColor(val);
+  }
+}
 
 function parseFormDateTime(){ const d=el('date').value; const t=el('time').value || '00:00:00'; if(!d) return null; const parts = d.split('-').map(Number); const time=t.split(':').map(Number); return new Date(parts[0],parts[1]-1,parts[2],time[0]||0,time[1]||0,time[2]||0); }
 
@@ -970,12 +1169,17 @@ function updateLedPreview() {
   const now = new Date(Date.now()+offsetMs);
   let diff = (target - now)/1000;
   let displayText = '';
-  const color = el('colorPicker').value;
+  let color = mainColorWheel ? mainColorWheel.currentColor : '#00ff00';
   
   if(diff <= 0) {
     displayText = el('title').value || 'FINI';
     expired = true;
     expireNote.style.display='block';
+    
+    // Utiliser la couleur du message de fin
+    if(endColorWheel) {
+      color = endColorWheel.currentColor;
+    }
   } else {
     expired = false;
     expireNote.style.display='none';
@@ -1022,43 +1226,40 @@ function syncFieldsToPreview(){
 ['title','date','time','fontStyle'].forEach(id => {
   el(id).addEventListener('input', () => {
     syncFieldsToPreview();
-    setSaving(true,'MODIFIÉ');
+    triggerAutoSave();
   });
 });
 
-// Gestionnaire pour le color picker principal
-el('colorPicker').addEventListener('input', e => {
-  updateColor(e.target.value);
-  updateColorPreview(el('colorPicker'), el('colorPreview'));
-  setSaving(true,'MODIFIÉ');
-});
+// Initialisation des roues de couleur
+let mainColorWheel, endColorWheel;
 
-// Gestionnaire pour le color picker de fin
-el('endColorPicker').addEventListener('input', e => {
-  updateColorPreview(el('endColorPicker'), el('endColorPreview'));
-  setSaving(true,'MODIFIÉ');
-});
+function initializeColorWheels() {
+  // Roue de couleur principale (pour le countdown)
+  mainColorWheel = new ColorWheel('colorWheel', 'colorCursor', 'colorPreview', (hex, rgb) => {
+    el('colorR').value = rgb.r;
+    el('colorG').value = rgb.g;
+    el('colorB').value = rgb.b;
+    updateLedPreview();
+    triggerAutoSave();
+  });
+  
+  // Roue de couleur pour le message de fin
+  endColorWheel = new ColorWheel('endColorWheel', 'endColorCursor', 'endColorPreview', (hex, rgb) => {
+    el('endColorR').value = rgb.r;
+    el('endColorG').value = rgb.g;
+    el('endColorB').value = rgb.b;
+    updateLedPreview();
+    triggerAutoSave();
+  });
+  
+  // Couleur par défaut pour le message de fin (doré)
+  endColorWheel.setColor('#FFD700');
+}
 
-// Bouton de sauvegarde principal
+// Bouton de sauvegarde manuelle (optionnel maintenant)
 el('btnSaveCountdown').addEventListener('click', () => {
-  const form = el('settingsForm');
-  const formData = new FormData(form);
-  
-  setSaving(true, 'ENVOI...');
-  
-  fetch('/settings', {
-    method: 'POST',
-    body: formData
-  })
-  .then(r => r.text())
-  .then(() => {
-    setSaving(false, 'PRÊT');
-    showToast('Configuration sauvegardée !');
-  })
-  .catch(() => {
-    setSaving(false, 'ERREUR');
-    showToast('Erreur de sauvegarde', false);
-  });
+  if (isAutoSaving) return;
+  performAutoSave();
 });
 
 // Bouton reset
@@ -1082,13 +1283,12 @@ el('btnSyncTime').addEventListener('click', () => {
     .then(r => r.json())
     .then(j => {
       if(j.status === 'OK') {
-        showToast('RTC synchronisé');
-        setSaving(false, 'PRÊT');
+        showAutoSaveIndicator('✅ RTC synchronisé', 'success');
       } else {
-        showToast('Erreur sync', false);
+        showAutoSaveIndicator('❌ Erreur sync', 'error');
       }
     })
-    .catch(() => showToast('Erreur réseau sync', false));
+    .catch(() => showAutoSaveIndicator('❌ Erreur réseau sync', 'error'));
 });
 
 // Ajustements rapides
@@ -1107,7 +1307,7 @@ document.querySelectorAll('.quick button[data-add], .quick button[data-set]').fo
   el('time').value = t; 
   syncFieldsToPreview(); 
   showToast('Nouvelle cible: ' + t); 
-  setSaving(true,'MODIFIÉ'); 
+  triggerAutoSave(); 
 }));
 
 // Chargement initial depuis l'ESP32
@@ -1115,13 +1315,11 @@ window.addEventListener('load',()=>{
   // Initialiser la matrice LED
   initLedMatrix();
   
-  // Créer les swatches pour les deux sections
-  createSwatches('swatches', 'colorPicker', 'colorPreview');
-  createSwatches('endSwatches', 'endColorPicker', 'endColorPreview');
+  // Initialiser les roues de couleur
+  initializeColorWheels();
   
-  // Initialiser les prévisualisations de couleur
-  updateColorPreview(el('colorPicker'), el('colorPreview'));
-  updateColorPreview(el('endColorPicker'), el('endColorPreview'));
+  // Créer les swatches
+  createSwatches('swatches', mainColorWheel);
   
   // Injecter version firmware (fourni côté C++ via endpoint futur ou placeholder compilé)
   document.getElementById('fwVer').textContent = 'v__FWVER__';
@@ -1266,17 +1464,93 @@ void displayFullscreenCountdown(int days, int hours, int minutes, int seconds) {
   static int16_t cachedFontXOffset = 0;     // x1 pour centrage correct
 
   // Recalculer systématiquement la couleur utilisateur (évite usage d'une valeur obsolète)
-  int localR = countdownColorR;
-  int localG = countdownColorG;
-  int localB = countdownColorB;
-  if (localR < 0) localR = 0; if (localR > 255) localR = 255;
-  if (localG < 0) localG = 0; if (localG > 255) localG = 255;
-  if (localB < 0) localB = 0; if (localB > 255) localB = 255;
-  uint16_t userColor = display.color565(localR, localG, localB);
+  int localR, localG, localB;
+  uint16_t userColor;
+  
+  if (countdownExpired) {
+    // Utiliser les couleurs du message de fin
+    localR = endMessageColorR;
+    localG = endMessageColorG;
+    localB = endMessageColorB;
+    if (localR < 0) localR = 0; if (localR > 255) localR = 255;
+    if (localG < 0) localG = 0; if (localG > 255) localG = 255;
+    if (localB < 0) localB = 0; if (localB > 255) localB = 255;
+    userColor = display.color565(localR, localG, localB);
+  } else {
+    // Utiliser les couleurs du countdown
+    localR = countdownColorR;
+    localG = countdownColorG;
+    localB = countdownColorB;
+    if (localR < 0) localR = 0; if (localR > 255) localR = 255;
+    if (localG < 0) localG = 0; if (localG > 255) localG = 255;
+    if (localB < 0) localB = 0; if (localB > 255) localB = 255;
+    userColor = display.color565(localR, localG, localB);
+  }
 
-  // Clignotement configurable des 10 dernières secondes (si activé)
+  // Gestion des effets d'affichage
   uint16_t displayColor = userColor;
-  if (!countdownExpired && blinkEnabled && blinkLastSeconds) {
+  
+  if (countdownExpired) {
+    // Effets pour le message de fin
+    unsigned long currentTime = millis();
+    static unsigned long lastEffectTime = 0;
+    static bool effectState = false;
+    static uint8_t rainbowHue = 0;
+    
+    switch (endMessageEffect) {
+      case 1: // Clignotant
+        if (currentTime - lastEffectTime >= 500) {
+          lastEffectTime = currentTime;
+          effectState = !effectState;
+        }
+        displayColor = effectState ? userColor : myBLACK;
+        break;
+        
+      case 2: // Fade in/out
+        {
+          int fadePhase = (currentTime / 50) % 100; // Cycle de 5 secondes
+          if (fadePhase > 50) fadePhase = 100 - fadePhase;
+          float fadeFactor = fadePhase / 50.0f;
+          int fadeR = (int)(localR * fadeFactor);
+          int fadeG = (int)(localG * fadeFactor);
+          int fadeB = (int)(localB * fadeFactor);
+          displayColor = display.color565(fadeR, fadeG, fadeB);
+        }
+        break;
+        
+      case 3: // Arc-en-ciel
+        if (currentTime - lastEffectTime >= 100) {
+          lastEffectTime = currentTime;
+          rainbowHue = (rainbowHue + 5) % 360;
+        }
+        {
+          // Conversion HSV vers RGB simple
+          float h = rainbowHue / 60.0f;
+          float s = 1.0f, v = 1.0f;
+          int i = (int)h;
+          float f = h - i;
+          float p = v * (1 - s);
+          float q = v * (1 - s * f);
+          float t = v * (1 - s * (1 - f));
+          float r, g, b;
+          switch (i) {
+            case 0: r = v; g = t; b = p; break;
+            case 1: r = q; g = v; b = p; break;
+            case 2: r = p; g = v; b = t; break;
+            case 3: r = p; g = q; b = v; break;
+            case 4: r = t; g = p; b = v; break;
+            default: r = v; g = p; b = q; break;
+          }
+          displayColor = display.color565((int)(r * 255), (int)(g * 255), (int)(b * 255));
+        }
+        break;
+        
+      default: // Statique
+        displayColor = userColor;
+        break;
+    }
+  } else if (blinkEnabled && blinkLastSeconds) {
+    // Clignotement configurable des 10 dernières secondes (si activé)
     unsigned long currentTime = millis();
     int localInterval = blinkIntervalMs;
     if (localInterval < 50) localInterval = 50;       // bornes de sécurité
@@ -1671,6 +1945,12 @@ void saveSettings() {
         preferences.putInt("colorR", colorR);
         preferences.putInt("colorG", colorG);
         preferences.putInt("colorB", colorB);
+        
+        // Paramètres du message de fin
+        preferences.putInt("endColorR", endMessageColorR);
+        preferences.putInt("endColorG", endMessageColorG);
+        preferences.putInt("endColorB", endMessageColorB);
+        preferences.putInt("endEffect", endMessageEffect);
         preferences.putBool("blinkEn", blinkEnabled);
         preferences.putInt("blinkInt", blinkIntervalMs);
         preferences.putInt("blinkWin", blinkWindowSeconds);
@@ -1875,6 +2155,24 @@ void handleSettings() {
   countdownColorR = server.hasArg("colorR") ? server.arg("colorR").toInt() : countdownColorR;
   countdownColorG = server.hasArg("colorG") ? server.arg("colorG").toInt() : countdownColorG;
   countdownColorB = server.hasArg("colorB") ? server.arg("colorB").toInt() : countdownColorB;
+  
+  // Récupérer les paramètres du message de fin
+  if (server.hasArg("endColorR")) {
+    endMessageColorR = server.arg("endColorR").toInt();
+  }
+  if (server.hasArg("endColorG")) {
+    endMessageColorG = server.arg("endColorG").toInt();
+  }
+  if (server.hasArg("endColorB")) {
+    endMessageColorB = server.arg("endColorB").toInt();
+  }
+  if (server.hasArg("endEffect")) {
+    String effect = server.arg("endEffect");
+    if (effect == "static") endMessageEffect = 0;
+    else if (effect == "blink") endMessageEffect = 1;
+    else if (effect == "fade") endMessageEffect = 2;
+    else if (effect == "rainbow") endMessageEffect = 3;
+  }
   if (server.hasArg("blinkEnabled")) {
     blinkEnabled = server.arg("blinkEnabled").toInt() != 0;
   }
