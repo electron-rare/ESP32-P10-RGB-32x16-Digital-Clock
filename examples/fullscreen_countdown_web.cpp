@@ -571,23 +571,33 @@ a { color:var(--accent); }
 .grid { display:grid; gap:14px; }
 .card { background:linear-gradient(145deg,var(--panel) 0%,var(--panel-alt) 100%); padding:18px 20px 22px; border-radius:14px; position:relative; box-shadow:0 2px 4px rgba(0,0,0,.3),0 8px 32px -8px rgba(0,0,0,.45); overflow:hidden; }
 form .field { display:flex; flex-direction:column; gap:4px; }
+.field-group { display:flex; flex-direction:column; gap:8px; }
+.field-group > label { font-size:.75rem; font-weight:600; letter-spacing:.06em; color:var(--accent); margin-bottom:4px; }
 label { font-size:.70rem; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); }
 input:not([type=color]), select { background:#0d1418; border:1px solid #233038; border-radius:8px; padding:10px 11px; font:inherit; color:var(--text); outline:none; transition:.2s border-color,.2s background; }
 input:focus, select:focus { border-color:var(--accent); background:#111b20; }
-input[type=color] { border:none; background:transparent; width:54px; height:42px; padding:0; cursor:pointer; }
+.color-input-group { display:flex; align-items:center; gap:8px; }
+.color-input-group input[type=color] { border:none; background:transparent; width:42px; height:42px; padding:0; cursor:pointer; border-radius:6px; }
+.color-preview { width:42px; height:42px; border-radius:6px; border:2px solid #333; background:var(--preview-color,#00ff00); box-shadow:0 0 0 1px rgba(255,255,255,.1); }
 .inline { display:flex; gap:10px; }
 .inline > * { flex:1; }
 .actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:8px; }
 button { --b:var(--accent); flex:1; cursor:pointer; border:none; border-radius:10px; padding:12px 18px; font:600 .9rem/1 system-ui; letter-spacing:.04em; background:linear-gradient(135deg,var(--b) 0%, #00b39e 100%); color:#fff; box-shadow:0 3px 10px -2px rgba(0,0,0,.5); transition:.25s transform,.25s filter; }
 button:hover { transform:translateY(-2px); filter:brightness(1.08); }
 button:active { transform:translateY(0); filter:brightness(.92); }
+button.primary { --b:var(--accent); background:linear-gradient(135deg,var(--accent),#00b39e); }
 button.secondary { --b:#2d3a41; background:linear-gradient(135deg,#2d3a41,#37464f); }
 button.danger { --b:var(--danger); background:linear-gradient(135deg,#d13737,#ef5350); }
-.preview-panel { text-align:center; padding:18px 12px 24px; border-radius:16px; background:#06090b; position:relative; }
-#countdown-preview { font-family:monospace; font-weight:600; font-size: clamp(28px,10vw,72px); line-height:1; color:#00ff73; letter-spacing:.04em; text-shadow:0 0 6px #00ff73, 0 0 14px rgba(0,255,115,.55); transition:.25s color,.25s text-shadow; word-break:break-word; }
-#titlePreview { display:block; font-size:.75rem; font-weight:500; letter-spacing:.12em; margin-top:10px; color:var(--muted); text-transform:uppercase; }
-.blink { animation:blink .9s steps(2,start) infinite; }
-@keyframes blink { to { visibility:hidden; } }
+.swatch { width:28px; height:28px; border-radius:6px; cursor:pointer; position:relative; box-shadow:0 0 0 2px #141c22, 0 0 0 4px rgba(0,0,0,.3); transition:.2s transform,.2s box-shadow; }
+.swatch:hover { transform:scale(1.1); box-shadow:0 0 0 2px #1f2d35,0 0 0 5px rgba(0,0,0,.55); }
+.swatch.active { outline:2px solid #fff; }
+.preview-panel { padding:18px 12px 24px; border-radius:16px; background:#000; position:relative; display:flex; justify-content:center; align-items:center; }
+.led-matrix { display:grid; grid-template-columns:repeat(96,4px); grid-template-rows:repeat(16,4px); gap:1px; background:#111; border:2px solid #333; padding:4px; border-radius:8px; }
+.led-pixel { width:4px; height:4px; background:#001100; border-radius:1px; transition:background 0.1s; }
+.led-pixel.active { box-shadow:0 0 2px currentColor; }
+#titlePreview { display:block; font-size:.65rem; margin-top:8px; color:var(--muted); text-align:center; }
+.blink .led-pixel.active { animation:ledBlink .9s steps(2,start) infinite; }
+@keyframes ledBlink { to { background:#001100 !important; box-shadow:none !important; } }
 .swatches { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
 .swatch { width:30px; height:30px; border-radius:6px; cursor:pointer; position:relative; box-shadow:0 0 0 2px #141c22, 0 0 0 4px rgba(0,0,0,.3); transition:.2s transform,.2s box-shadow; }
 .swatch:hover { transform:scale(1.1); box-shadow:0 0 0 2px #1f2d35,0 0 0 5px rgba(0,0,0,.55); }
@@ -609,7 +619,7 @@ footer { margin:40px 0 10px; text-align:center; font-size:.6rem; letter-spacing:
 <div class="wrap grid" style="gap:18px;">
   <div class="card preview-panel" id="previewCard">
     <div class="save-indicator" id="saveState"><span class="dot"></span><span id="saveLabel">PRÊT</span></div>
-    <div id="countdown-preview">--:--:--</div>
+    <div class="led-matrix" id="ledMatrix"></div>
     <span id="titlePreview"></span>
     <div class="inline-note" id="expireNote" style="display:none;">Le compte à rebours est terminé.</div>
     <div class="quick" aria-label="Ajustements rapides">
@@ -621,55 +631,88 @@ footer { margin:40px 0 10px; text-align:center; font-size:.6rem; letter-spacing:
       <button type="button" data-set="EOD">Fin de journée</button>
     </div>
   </div>
-  <div class="card" id="formCard">
-  <h1>Configuration du Compte à Rebours <span id="fwVer" style="font-size:.55rem;opacity:.6;vertical-align:middle;"></span></h1>
+  
+  <!-- Section Configuration Countdown -->
+  <div class="card">
+    <h2>⏰ Configuration du Countdown</h2>
     <form action="/settings" method="POST" id="settingsForm" autocomplete="off">
-      <div class="grid" style="gap:18px;">
+      <div class="grid" style="gap:16px;">
         <div class="field">
-          <label for="title">Titre</label>
-          <input id="title" name="title" maxlength="50" required placeholder="Mon Événement" />
+          <label for="title">📝 Titre du countdown</label>
+          <input id="title" name="title" maxlength="50" required placeholder="NOUVEL AN 2026" />
         </div>
-        <div class="row-2">
-          <div class="field"><label for="date">Date</label><input type="date" id="date" name="date" required /></div>
-          <div class="field"><label for="time">Heure (hh:mm:ss)</label><input type="time" id="time" name="time" step="1" required /></div>
-        </div>
-        <div class="row-2">
-          <div class="field" style="grid-column:1/-1;">
-            <label>Police : DejaVu Sans (Support complet accents et caractères spéciaux)</label>
-            <div style="padding:8px; background:var(--panel-alt); border-radius:4px; font-size:0.9em; color:var(--muted);">
-              ✓ Accents français : àâäéèêëïîôöùûüÿç<br>
-              ✓ Caractères spéciaux : ñß€£¥§°±×÷<br>
-              ✓ Taille optimisée automatiquement selon la résolution
-            </div>
+        
+        <div class="field-group">
+          <label>📅 Date et heure cible</label>
+          <div class="inline">
+            <div class="field"><input type="date" id="date" name="date" required /></div>
+            <div class="field"><input type="time" id="time" name="time" step="1" required /></div>
           </div>
         </div>
-        <div class="row-2">
-          <div class="field">
-            <label for="fontStyle">Style de Police</label>
-            <select id="fontStyle" name="fontStyle">
-              <option value="0" selected>Normal</option>
-              <option value="1">Gras</option>
-              <option value="2">Italique</option>
-            </select>
-          </div>
-          <div class="field"></div>
-        </div>
-        <div class="row-2">
-          <div class="field" style="grid-column:1/-1;">
-            <label>Couleur</label>
-            <div class="inline" style="align-items:center;">
-              <input type="color" id="colorPicker" value="#00ff00" aria-label="Couleur personnalisée" />
-              <div style="display:flex; flex:1; flex-wrap:wrap; gap:6px;" class="swatches" id="swatches" aria-label="Couleurs prédéfinies"></div>
+        
+        <div class="field-group">
+          <label>🎨 Style d'affichage</label>
+          <div class="inline">
+            <div class="field">
+              <label for="fontStyle">Police</label>
+              <select id="fontStyle" name="fontStyle">
+                <option value="0">DejaVu Normal</option>
+                <option value="1">DejaVu Gras</option>
+                <option value="2">DejaVu Italique</option>
+              </select>
             </div>
-            <input type="hidden" id="colorR" name="colorR" value="0" />
-            <input type="hidden" id="colorG" name="colorG" value="255" />
-            <input type="hidden" id="colorB" name="colorB" value="0" />
+            <div class="field">
+              <label for="colorPicker">Couleur</label>
+              <div class="color-input-group">
+                <input type="color" id="colorPicker" value="#00ff00" />
+                <div class="color-preview" id="colorPreview"></div>
+              </div>
+            </div>
+          </div>
+          <div class="swatches" id="swatches"></div>
+        </div>
+      </div>
+      
+      <!-- Champs cachés pour la soumission -->
+      <input type="hidden" id="colorR" name="colorR" value="0" />
+      <input type="hidden" id="colorG" name="colorG" value="255" />
+      <input type="hidden" id="colorB" name="colorB" value="0" />
+    </form>
+  </div>
+  
+  <!-- Section Texte de fin -->
+  <div class="card">
+    <h2>🎯 Message de fin</h2>
+    <div class="field-group">
+      <label>📄 Texte affiché quand le countdown se termine</label>
+      <div class="inline">
+        <div class="field">
+          <input id="endMessage" name="endMessage" maxlength="50" placeholder="BONNE ANNÉE !" />
+        </div>
+        <div class="field">
+          <label for="endColorPicker">Couleur</label>
+          <div class="color-input-group">
+            <input type="color" id="endColorPicker" value="#ff0000" />
+            <div class="color-preview" id="endColorPreview"></div>
           </div>
         </div>
       </div>
-      <div class="actions">
-        <button type="submit" id="btnSave">Enregistrer</button>
-        <button type="button" class="secondary" id="btnNow">Maintenant</button>
+      <div class="swatches" id="endSwatches"></div>
+    </div>
+  </div>
+  
+  <!-- Boutons d'action principaux -->
+  <div class="card">
+    <div class="actions">
+      <button type="button" id="btnSaveCountdown" class="primary">💾 Sauvegarder Configuration</button>
+      <button type="button" id="btnSyncTime" class="secondary">🕐 Synchroniser Heure</button>
+      <button type="button" id="btnReset" class="danger">🔄 Reset</button>
+    </div>
+  </div>
+  
+  <div class="card" id="formCard">
+  <h1>Paramètres Avancés <span id="fwVer" style="font-size:.55rem;opacity:.6;vertical-align:middle;"></span></h1>
+    <form action="/settings" method="POST" id="advancedForm" autocomplete="off">
         <button type="button" class="secondary" id="btnSyncTime" title="Synchroniser le RTC avec l'heure locale du navigateur">Sync Heure</button>
         <button type="button" class="danger" id="btnReset">Réinitialiser</button>
       </div>
@@ -789,7 +832,7 @@ function rgbToHex(r,g,b){return '#'+hex(r)+hex(g)+hex(b);}
 
 // === Éléments DOM ===
 const el = id => document.getElementById(id);
-const preview = el('countdown-preview');
+const ledMatrix = el('ledMatrix');
 const titlePreview = el('titlePreview');
 const expireNote = el('expireNote');
 const form = el('settingsForm');
@@ -798,9 +841,112 @@ const saveLabel = el('saveLabel');
 const toast = el('toast');
 const swatchesBox = el('swatches');
 
-// === Swatches prédéfinies ===
+// === Création de la matrice LED ===
+const MATRIX_WIDTH = 96; // 3 panneaux de 32px
+const MATRIX_HEIGHT = 16;
+let ledPixels = [];
+
+// Initialiser la matrice LED
+function initLedMatrix() {
+  ledMatrix.innerHTML = '';
+  ledPixels = [];
+  for(let i = 0; i < MATRIX_WIDTH * MATRIX_HEIGHT; i++) {
+    const pixel = document.createElement('div');
+    pixel.className = 'led-pixel';
+    ledMatrix.appendChild(pixel);
+    ledPixels.push(pixel);
+  }
+}
+
+// Fonction pour allumer un pixel à une position donnée
+function setPixel(x, y, color) {
+  if(x >= 0 && x < MATRIX_WIDTH && y >= 0 && y < MATRIX_HEIGHT) {
+    const index = y * MATRIX_WIDTH + x;
+    if(ledPixels[index]) {
+      ledPixels[index].style.backgroundColor = color;
+      ledPixels[index].classList.add('active');
+    }
+  }
+}
+
+// Effacer tous les pixels
+function clearMatrix() {
+  ledPixels.forEach(pixel => {
+    pixel.style.backgroundColor = '#001100';
+    pixel.classList.remove('active');
+  });
+}
+
+// Dessiner du texte simplifié sur la matrice (simulation basique)
+function drawTextOnMatrix(text, color) {
+  clearMatrix();
+  
+  // Police bitmap 5x7 simplifiée pour les chiffres et :
+  const font = {
+    '0': [[1,1,1],[1,0,1],[1,0,1],[1,0,1],[1,1,1]],
+    '1': [[0,1,0],[1,1,0],[0,1,0],[0,1,0],[1,1,1]],
+    '2': [[1,1,1],[0,0,1],[1,1,1],[1,0,0],[1,1,1]],
+    '3': [[1,1,1],[0,0,1],[1,1,1],[0,0,1],[1,1,1]],
+    '4': [[1,0,1],[1,0,1],[1,1,1],[0,0,1],[0,0,1]],
+    '5': [[1,1,1],[1,0,0],[1,1,1],[0,0,1],[1,1,1]],
+    '6': [[1,1,1],[1,0,0],[1,1,1],[1,0,1],[1,1,1]],
+    '7': [[1,1,1],[0,0,1],[0,0,1],[0,0,1],[0,0,1]],
+    '8': [[1,1,1],[1,0,1],[1,1,1],[1,0,1],[1,1,1]],
+    '9': [[1,1,1],[1,0,1],[1,1,1],[0,0,1],[1,1,1]],
+    ':': [[0],[1],[0],[1],[0]],
+    ' ': [[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0]],
+    '-': [[0,0,0],[0,0,0],[1,1,1],[0,0,0],[0,0,0]]
+  };
+  
+  let x = 8; // Position de départ
+  for(let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const pattern = font[char];
+    if(pattern) {
+      for(let row = 0; row < pattern.length; row++) {
+        for(let col = 0; col < pattern[row].length; col++) {
+          if(pattern[row][col]) {
+            setPixel(x + col, 5 + row, color);
+          }
+        }
+      }
+      x += (pattern[0] ? pattern[0].length : 3) + 1; // Espacement entre caractères
+    }
+  }
+}
+
+// === Configuration des swatches ===
 const SWATCHES = ['#00ff00','#ffffff','#ff0000','#00bcd4','#ffeb3b','#ff9800','#ff00ff','#2196f3','#9c27b0','#4caf50'];
-SWATCHES.forEach(c=>{const d=document.createElement('div');d.className='swatch';d.style.background=c;d.dataset.color=c;d.title=c;d.addEventListener('click',()=>{el('colorPicker').value=c;updateColor(c,true);});swatchesBox.appendChild(d);});
+
+// Fonction pour créer les swatches
+function createSwatches(containerId, inputId, previewId) {
+  const container = el(containerId);
+  const input = el(inputId);
+  const preview = el(previewId);
+  
+  container.innerHTML = '';
+  SWATCHES.forEach(color => {
+    const swatch = document.createElement('div');
+    swatch.className = 'swatch';
+    swatch.style.background = color;
+    swatch.dataset.color = color;
+    swatch.title = color;
+    swatch.addEventListener('click', () => {
+      input.value = color;
+      updateColorPreview(input, preview);
+      if(containerId === 'swatches') updateColor(color, true);
+      else showToast('Couleur appliquée');
+    });
+    container.appendChild(swatch);
+  });
+}
+
+// Fonction pour mettre à jour la prévisualisation de couleur
+function updateColorPreview(input, preview) {
+  const color = input.value;
+  preview.style.setProperty('--preview-color', color);
+  preview.style.backgroundColor = color;
+}
 
 // === Variables de logique ===
 let target = null; // Date target JS
@@ -811,53 +957,172 @@ function showToast(msg,ok=true){toast.textContent=msg;toast.classList.add('show'
 
 function setSaving(active,label){if(active){saveState.classList.add('active');saveLabel.textContent=label||'SAUVEGARDE';}else{saveState.classList.remove('active');saveLabel.textContent=label||'PRÊT';}}
 
-function updateColor(val,fromSwatch=false){const {r,g,b}=hexToRgb(val); el('colorR').value=r; el('colorG').value=g; el('colorB').value=b; preview.style.color=val; preview.style.textShadow=`0 0 6px ${val},0 0 16px ${val}80`; document.querySelectorAll('.swatch').forEach(s=>s.classList.toggle('active',s.dataset.color===val)); if(fromSwatch){showToast('Couleur appliquée');}}
+function updateColor(val,fromSwatch=false){const {r,g,b}=hexToRgb(val); el('colorR').value=r; el('colorG').value=g; el('colorB').value=b; document.querySelectorAll('.swatch').forEach(s=>s.classList.toggle('active',s.dataset.color===val)); if(fromSwatch){showToast('Couleur appliquée');} updateLedPreview();}
 
 function parseFormDateTime(){ const d=el('date').value; const t=el('time').value || '00:00:00'; if(!d) return null; const parts = d.split('-').map(Number); const time=t.split(':').map(Number); return new Date(parts[0],parts[1]-1,parts[2],time[0]||0,time[1]||0,time[2]||0); }
 
 function refreshTarget(){ target = parseFormDateTime(); }
 
-function updatePreviewLoop(ts){ if(!target){ requestAnimationFrame(updatePreviewLoop); return; } const now = new Date(Date.now()+offsetMs); let diff = (target - now)/1000; if(diff<=0){diff=0; if(!expired){expired=true; preview.classList.remove('blink'); preview.textContent=el('title').value || 'TERMINÉ'; expireNote.style.display='block'; showToast('Compte à rebours terminé',false);} }
- if(!expired){ expireNote.style.display='none'; let d=Math.floor(diff/86400); let h=Math.floor(diff%86400/3600); let m=Math.floor(diff%3600/60); let s=Math.floor(diff%60); // Choix format adaptatif
- let txt=''; if(d>0) txt=`${d}d ${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}`; else if(h>0) txt=`${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`; else if(m>0) txt=`${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`; else txt=s.toString().padStart(2,'0'); preview.textContent=txt; // blinking last N seconds
- const bw = parseInt(el('blinkWindow').value)||10; if(d===0 && h===0 && m===0 && s<=bw){ if(ts-lastBlink>450){ lastBlink=ts; blink=!blink; preview.classList.toggle('blink',blink);} } else { preview.classList.remove('blink'); }
- }
- requestAnimationFrame(updatePreviewLoop); }
+// Fonction pour mettre à jour la prévisualisation LED
+function updateLedPreview() {
+  if(!target) return;
+  
+  const now = new Date(Date.now()+offsetMs);
+  let diff = (target - now)/1000;
+  let displayText = '';
+  const color = el('colorPicker').value;
+  
+  if(diff <= 0) {
+    displayText = el('title').value || 'FINI';
+    expired = true;
+    expireNote.style.display='block';
+  } else {
+    expired = false;
+    expireNote.style.display='none';
+    let d=Math.floor(diff/86400);
+    let h=Math.floor(diff%86400/3600);
+    let m=Math.floor(diff%3600/60);
+    let s=Math.floor(diff%60);
+    
+    // Format adaptatif comme dans l'original
+    if(d>0) displayText=`${d}d ${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}`;
+    else if(h>0) displayText=`${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+    else if(m>0) displayText=`${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+    else displayText=s.toString().padStart(2,'0');
+    
+    // Gestion du clignotement pour les dernières secondes
+    const bw = parseInt(el('blinkWindow').value)||10;
+    if(d===0 && h===0 && m===0 && s<=bw) {
+      if(Date.now()-lastBlink>450) {
+        lastBlink=Date.now();
+        blink=!blink;
+        ledMatrix.classList.toggle('blink',blink);
+      }
+    } else {
+      ledMatrix.classList.remove('blink');
+    }
+  }
+  
+  drawTextOnMatrix(displayText, color);
+}
+
+function updatePreviewLoop(ts){ 
+  updateLedPreview();
+  requestAnimationFrame(updatePreviewLoop); 
+}
 requestAnimationFrame(updatePreviewLoop);
 
-function syncFieldsToPreview(){ titlePreview.textContent = (el('title').value||'').toUpperCase(); refreshTarget(); }
+function syncFieldsToPreview(){ 
+  titlePreview.textContent = (el('title').value||'').toUpperCase(); 
+  refreshTarget(); 
+  updateLedPreview();
+}
 
-['title','date','time','fontStyle','blinkEnabled','blinkInterval','blinkWindow','marqueeEnabled','marqueeInterval','marqueeGap','marqueeMode','marqueeReturnInterval','marqueeBouncePauseLeft','marqueeBouncePauseRight','marqueeOneShotDelay','marqueeOneShotStopCenter','marqueeOneShotRestart','marqueeAccelEnabled','marqueeAccelStart','marqueeAccelEnd','marqueeAccelDuration','brightness','brightnessMode'].forEach(id=> el(id).addEventListener('input',()=>{ if(id==='brightnessMode'){ if(el('brightnessMode').value==='auto'){ el('brightnessHidden').value='-1'; } else { el('brightnessHidden').value=el('brightness').value; } } if(id==='brightness'){ if(el('brightnessMode').value==='manual'){ el('brightnessHidden').value=el('brightness').value; } } syncFieldsToPreview(); setSaving(true,'MODIFIÉ'); }));
-el('colorPicker').addEventListener('input',e=>{ updateColor(e.target.value); setSaving(true,'MODIFIÉ'); });
+// Gestionnaires d'événements pour les champs principaux
+['title','date','time','fontStyle'].forEach(id => {
+  el(id).addEventListener('input', () => {
+    syncFieldsToPreview();
+    setSaving(true,'MODIFIÉ');
+  });
+});
+
+// Gestionnaire pour le color picker principal
+el('colorPicker').addEventListener('input', e => {
+  updateColor(e.target.value);
+  updateColorPreview(el('colorPicker'), el('colorPreview'));
+  setSaving(true,'MODIFIÉ');
+});
+
+// Gestionnaire pour le color picker de fin
+el('endColorPicker').addEventListener('input', e => {
+  updateColorPreview(el('endColorPicker'), el('endColorPreview'));
+  setSaving(true,'MODIFIÉ');
+});
+
+// Bouton de sauvegarde principal
+el('btnSaveCountdown').addEventListener('click', () => {
+  const form = el('settingsForm');
+  const formData = new FormData(form);
+  
+  setSaving(true, 'ENVOI...');
+  
+  fetch('/settings', {
+    method: 'POST',
+    body: formData
+  })
+  .then(r => r.text())
+  .then(() => {
+    setSaving(false, 'PRÊT');
+    showToast('Configuration sauvegardée !');
+  })
+  .catch(() => {
+    setSaving(false, 'ERREUR');
+    showToast('Erreur de sauvegarde', false);
+  });
+});
+
+// Bouton reset
+el('btnReset').addEventListener('click', () => {
+  if(!confirm('Réinitialiser tous les paramètres ?')) return;
+  fetch('/reset')
+    .then(() => {
+      showToast('Reset effectué');
+      setTimeout(() => location.reload(), 1000);
+    })
+    .catch(() => showToast('Erreur reset', false));
+});
+
+// Synchronisation de l'heure RTC
+el('btnSyncTime').addEventListener('click', () => {
+  const now = new Date();
+  const epoch = now.getTime();
+  const tz = now.getTimezoneOffset();
+  showToast('Envoi heure locale...');
+  fetch(`/syncTime?epoch=${epoch}&tz=${tz}`)
+    .then(r => r.json())
+    .then(j => {
+      if(j.status === 'OK') {
+        showToast('RTC synchronisé');
+        setSaving(false, 'PRÊT');
+      } else {
+        showToast('Erreur sync', false);
+      }
+    })
+    .catch(() => showToast('Erreur réseau sync', false));
+});
 
 // Ajustements rapides
 document.querySelectorAll('.quick button[data-add], .quick button[data-set]').forEach(btn=>btn.addEventListener('click',()=>{
-  if(!target) refreshTarget(); if(btn.dataset.set==='EOD'){ const n=new Date(); n.setHours(23,59,59,0); target=n; } else { const add=parseInt(btn.dataset.add,10); target = new Date((target?target:new Date()).getTime()+add*1000); }
-  el('date').value = target.toISOString().split('T')[0]; const t = target.toTimeString().split(' ')[0]; el('time').value = t; syncFieldsToPreview(); showToast('Nouvelle cible '+ t); setSaving(true,'MODIFIÉ'); }));
-
-// Bouton maintenant
-el('btnNow').addEventListener('click',()=>{ const n=new Date(); el('date').value=n.toISOString().split('T')[0]; el('time').value=n.toTimeString().split(' ')[0]; syncFieldsToPreview(); showToast('Synchro à maintenant'); setSaving(true,'MODIFIÉ'); });
-
-// Synchronisation de l'heure RTC côté ESP32 avec l'heure locale du navigateur
-el('btnSyncTime').addEventListener('click',()=>{
-  const now = new Date();
-  const epoch = now.getTime(); // ms
-  const tz = now.getTimezoneOffset(); // minutes (UTC = local + offset)
-  showToast('Envoi heure locale...');
-  fetch(`/syncTime?epoch=${epoch}&tz=${tz}`)
-    .then(r=>r.json())
-    .then(j=>{ if(j.status==='OK'){ showToast('RTC synchronisé'); setSaving(false,'PRÊT'); } else { showToast('Erreur sync',false);} })
-    .catch(()=>showToast('Erreur réseau sync',false));
-});
-
-// Reset
-el('btnReset').addEventListener('click',()=>{ if(!confirm('Réinitialiser les paramètres ?')) return; form.action='/reset'; form.submit(); });
-
-// Soumission
-form.addEventListener('submit',()=>{ setSaving(true,'ENVOI...'); el('btnSave').disabled=true; setTimeout(()=>{ setSaving(true,'SAUVEGARDE'); },150); });
+  if(!target) refreshTarget(); 
+  if(btn.dataset.set==='EOD'){ 
+    const n=new Date(); 
+    n.setHours(23,59,59,0); 
+    target=n; 
+  } else { 
+    const add=parseInt(btn.dataset.add,10); 
+    target = new Date((target?target:new Date()).getTime()+add*1000); 
+  }
+  el('date').value = target.toISOString().split('T')[0]; 
+  const t = target.toTimeString().split(' ')[0]; 
+  el('time').value = t; 
+  syncFieldsToPreview(); 
+  showToast('Nouvelle cible: ' + t); 
+  setSaving(true,'MODIFIÉ'); 
+}));
 
 // Chargement initial depuis l'ESP32
 window.addEventListener('load',()=>{
+  // Initialiser la matrice LED
+  initLedMatrix();
+  
+  // Créer les swatches pour les deux sections
+  createSwatches('swatches', 'colorPicker', 'colorPreview');
+  createSwatches('endSwatches', 'endColorPicker', 'endColorPreview');
+  
+  // Initialiser les prévisualisations de couleur
+  updateColorPreview(el('colorPicker'), el('colorPreview'));
+  updateColorPreview(el('endColorPicker'), el('endColorPreview'));
+  
   // Injecter version firmware (fourni côté C++ via endpoint futur ou placeholder compilé)
   document.getElementById('fwVer').textContent = 'v__FWVER__';
   const now=new Date(); const tomorrow=new Date(now.getTime()+86400000); el('date').value=tomorrow.toISOString().split('T')[0]; el('time').value='23:59:59';
