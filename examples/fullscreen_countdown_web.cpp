@@ -33,11 +33,10 @@
 #include <Arduino.h>
 #include <PxMatrix.h>
 #include <RTClib.h>
-#include <Fonts/FreeSansBold9pt7b.h>
-#include <Fonts/FreeSans9pt7b.h>
-#include <Fonts/FreeMono9pt7b.h>
-// Option police étendue : ajouter ici votre police Latin-1 générée et définir HAVE_LATIN1_FONT
-#include "DejaVuSans9ptLat1.h" // Placeholder Latin-1 font (remplacer par version générée)
+// Polices DejaVu avec support Latin-1 complet (accents et caractères spéciaux)
+#include "DejaVuSans9ptLat1.h"      // Normal
+#include "DejaVuSansBold9ptLat1.h"  // Gras
+#include "DejaVuSansOblique9ptLat1.h" // Italique
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Preferences.h>
@@ -194,6 +193,42 @@ size_t utf8SafeCopyTruncate(const String &src, char *dest, size_t destSize, size
   dest[o] = '\0';
   return o; // octets copiés
 }
+
+// === Classe helper pour gestion automatique des mutex ===
+class MutexGuard {
+private:
+  SemaphoreHandle_t mutex;
+  bool acquired;
+  
+public:
+  MutexGuard(SemaphoreHandle_t mtx, TickType_t timeout = pdMS_TO_TICKS(500)) : mutex(mtx), acquired(false) {
+    if (mutex != NULL) {
+      acquired = xSemaphoreTake(mutex, timeout) == pdTRUE;
+    }
+  }
+  
+  ~MutexGuard() {
+    if (acquired && mutex != NULL) {
+      xSemaphoreGive(mutex);
+    }
+  }
+  
+  bool isLocked() const { return acquired; }
+  
+  // Interdire la copie pour éviter double libération
+  MutexGuard(const MutexGuard&) = delete;
+  MutexGuard& operator=(const MutexGuard&) = delete;
+};
+
+// Macros pour simplifier l'utilisation
+#define MUTEX_GUARD(mutex, timeout) MutexGuard guard_##mutex(mutex, timeout)
+#define MUTEX_GUARD_CHECK(mutex, timeout) MutexGuard guard_##mutex(mutex, timeout); if (!guard_##mutex.isLocked())
+
+// === Constantes optimisées pour les timeouts ===
+#define MUTEX_TIMEOUT_FAST     pdMS_TO_TICKS(50)   // Opérations rapides
+#define MUTEX_TIMEOUT_NORMAL   pdMS_TO_TICKS(200)  // Opérations normales
+#define MUTEX_TIMEOUT_SLOW     pdMS_TO_TICKS(1000) // Opérations lentes (I/O)
+#define MUTEX_TIMEOUT_CRITICAL pdMS_TO_TICKS(2000) // Opérations critiques
 
 // Prototypes des tâches
 void DisplayTask(void * parameter);
@@ -375,11 +410,11 @@ int countdownHour = 23;
 int countdownMinute = 59;
 int countdownSecond = 0;
 char countdownTitle[51] = "COUNTDOWN";
-int countdownTextSize = 2; // 1-3
+// Polices DejaVu avec taille automatique et style configurable
+int fontStyle = 0; // 0=Normal, 1=Gras, 2=Italique
 int countdownColorR = 0;
 int countdownColorG = 255;
 int countdownColorB = 0;
-int fontIndex = 0; // 0=Default, 1=Sans, 2=Sans Bold, 3=Mono, 4=Latin-1
 uint16_t countdownColor;
 int displayBrightness = -1; // -1 = auto (calculé selon nombre de panneaux)
 
@@ -467,22 +502,27 @@ footer { margin:40px 0 10px; text-align:center; font-size:.6rem; letter-spacing:
           <div class="field"><label for="time">Heure (hh:mm:ss)</label><input type="time" id="time" name="time" step="1" required /></div>
         </div>
         <div class="row-2">
-          <div class="field"><label for="fontIndex">Police</label>
-            <select id="fontIndex" name="fontIndex">
-              <option value="0">Standard</option>
-              <option value="1">Sans Serif</option>
-              <option value="2">Sans Serif Bold</option>
-              <option value="3">Monospace</option>
-              <option value="4">Latin-1 (Accents)</option>
+          <div class="field" style="grid-column:1/-1;">
+            <label>Police : DejaVu Sans (Support complet accents et caractères spéciaux)</label>
+            <div style="padding:8px; background:var(--panel-alt); border-radius:4px; font-size:0.9em; color:var(--muted);">
+              ✓ Accents français : àâäéèêëïîôöùûüÿç<br>
+              ✓ Caractères spéciaux : ñß€£¥§°±×÷<br>
+              ✓ Taille optimisée automatiquement selon la résolution
+            </div>
+          </div>
+        </div>
+        <div class="row-2">
+          <div class="field">
+            <label for="fontStyle">Style de Police</label>
+            <select id="fontStyle" name="fontStyle">
+              <option value="0" selected>Normal</option>
+              <option value="1">Gras</option>
+              <option value="2">Italique</option>
             </select>
           </div>
-          <div class="field"><label for="textSize">Taille</label>
-            <select id="textSize" name="textSize">
-              <option value="1">Petite</option>
-              <option value="2" selected>Moyenne</option>
-              <option value="3">Grande</option>
-            </select>
-          </div>
+          <div class="field"></div>
+        </div>
+        <div class="row-2">
           <div class="field" style="grid-column:1/-1;">
             <label>Couleur</label>
             <div class="inline" style="align-items:center;">
@@ -655,7 +695,7 @@ requestAnimationFrame(updatePreviewLoop);
 
 function syncFieldsToPreview(){ titlePreview.textContent = (el('title').value||'').toUpperCase(); refreshTarget(); }
 
-['title','date','time','fontIndex','textSize','blinkEnabled','blinkInterval','blinkWindow','marqueeEnabled','marqueeInterval','marqueeGap','marqueeMode','marqueeReturnInterval','marqueeBouncePauseLeft','marqueeBouncePauseRight','marqueeOneShotDelay','marqueeOneShotStopCenter','marqueeOneShotRestart','marqueeAccelEnabled','marqueeAccelStart','marqueeAccelEnd','marqueeAccelDuration','brightness','brightnessMode'].forEach(id=> el(id).addEventListener('input',()=>{ if(id==='brightnessMode'){ if(el('brightnessMode').value==='auto'){ el('brightnessHidden').value='-1'; } else { el('brightnessHidden').value=el('brightness').value; } } if(id==='brightness'){ if(el('brightnessMode').value==='manual'){ el('brightnessHidden').value=el('brightness').value; } } syncFieldsToPreview(); setSaving(true,'MODIFIÉ'); }));
+['title','date','time','fontStyle','blinkEnabled','blinkInterval','blinkWindow','marqueeEnabled','marqueeInterval','marqueeGap','marqueeMode','marqueeReturnInterval','marqueeBouncePauseLeft','marqueeBouncePauseRight','marqueeOneShotDelay','marqueeOneShotStopCenter','marqueeOneShotRestart','marqueeAccelEnabled','marqueeAccelStart','marqueeAccelEnd','marqueeAccelDuration','brightness','brightnessMode'].forEach(id=> el(id).addEventListener('input',()=>{ if(id==='brightnessMode'){ if(el('brightnessMode').value==='auto'){ el('brightnessHidden').value='-1'; } else { el('brightnessHidden').value=el('brightness').value; } } if(id==='brightness'){ if(el('brightnessMode').value==='manual'){ el('brightnessHidden').value=el('brightness').value; } } syncFieldsToPreview(); setSaving(true,'MODIFIÉ'); }));
 el('colorPicker').addEventListener('input',e=>{ updateColor(e.target.value); setSaving(true,'MODIFIÉ'); });
 
 // Ajustements rapides
@@ -689,7 +729,7 @@ window.addEventListener('load',()=>{
   // Injecter version firmware (fourni côté C++ via endpoint futur ou placeholder compilé)
   document.getElementById('fwVer').textContent = 'v__FWVER__';
   const now=new Date(); const tomorrow=new Date(now.getTime()+86400000); el('date').value=tomorrow.toISOString().split('T')[0]; el('time').value='23:59:59';
-  fetch('/getSettings').then(r=>r.json()).then(d=>{ el('title').value=d.title; const ds=`${d.year}-${String(d.month).padStart(2,'0')}-${String(d.day).padStart(2,'0')}`; el('date').value=ds; const ts=`${String(d.hour).padStart(2,'0')}:${String(d.minute).padStart(2,'0')}:${String(d.second).padStart(2,'0')}`; el('time').value=ts; el('fontIndex').value=d.fontIndex; el('textSize').value=d.textSize; if(d.blinkEnabled!==undefined){ el('blinkEnabled').value = d.blinkEnabled ? '1' : '0'; } if(d.blinkIntervalMs!==undefined){ el('blinkInterval').value = d.blinkIntervalMs; } if(d.blinkWindow!==undefined){ el('blinkWindow').value = d.blinkWindow; } if(d.marqueeEnabled!==undefined){ el('marqueeEnabled').value = d.marqueeEnabled ? '1':'0'; } if(d.marqueeIntervalMs!==undefined){ el('marqueeInterval').value = d.marqueeIntervalMs; } if(d.marqueeGap!==undefined){ el('marqueeGap').value = d.marqueeGap; } if(d.marqueeMode!==undefined){ el('marqueeMode').value = d.marqueeMode; } if(d.marqueeReturnIntervalMs!==undefined){ el('marqueeReturnInterval').value = d.marqueeReturnIntervalMs; } if(d.marqueeBouncePauseLeftMs!==undefined){ el('marqueeBouncePauseLeft').value = d.marqueeBouncePauseLeftMs; } if(d.marqueeBouncePauseRightMs!==undefined){ el('marqueeBouncePauseRight').value = d.marqueeBouncePauseRightMs; } if(d.marqueeOneShotDelayMs!==undefined){ el('marqueeOneShotDelay').value = d.marqueeOneShotDelayMs; } if(d.marqueeOneShotStopCenter!==undefined){ el('marqueeOneShotStopCenter').value = d.marqueeOneShotStopCenter? '1':'0'; } if(d.marqueeOneShotRestartSec!==undefined){ el('marqueeOneShotRestart').value = d.marqueeOneShotRestartSec; } if(d.marqueeAccelEnabled!==undefined){ el('marqueeAccelEnabled').value = d.marqueeAccelEnabled? '1':'0'; } if(d.marqueeAccelStartIntervalMs!==undefined){ el('marqueeAccelStart').value = d.marqueeAccelStartIntervalMs; } if(d.marqueeAccelEndIntervalMs!==undefined){ el('marqueeAccelEnd').value = d.marqueeAccelEndIntervalMs; } if(d.marqueeAccelDurationMs!==undefined){ el('marqueeAccelDuration').value = d.marqueeAccelDurationMs; } if(d.brightness!==undefined){ if(parseInt(d.brightness,10)===-1){ el('brightnessMode').value='auto'; el('brightnessHidden').value='-1'; } else { el('brightnessMode').value='manual'; el('brightness').value=d.brightness; el('brightnessHidden').value=d.brightness; } } const color=rgbToHex(d.colorR,d.colorG,d.colorB); el('colorPicker').value=color; updateColor(color); syncFieldsToPreview(); setSaving(false,'PRÊT'); showToast('Paramètres chargés'); }).catch(()=>{ showToast('Échec chargement paramètres',false); setSaving(false,'HORS LIGNE'); syncFieldsToPreview(); });
+  fetch('/getSettings').then(r=>r.json()).then(d=>{ el('title').value=d.title; const ds=`${d.year}-${String(d.month).padStart(2,'0')}-${String(d.day).padStart(2,'0')}`; el('date').value=ds; const ts=`${String(d.hour).padStart(2,'0')}:${String(d.minute).padStart(2,'0')}:${String(d.second).padStart(2,'0')}`; el('time').value=ts; if(d.blinkEnabled!==undefined){ el('blinkEnabled').value = d.blinkEnabled ? '1' : '0'; } if(d.blinkIntervalMs!==undefined){ el('blinkInterval').value = d.blinkIntervalMs; } if(d.blinkWindow!==undefined){ el('blinkWindow').value = d.blinkWindow; } if(d.marqueeEnabled!==undefined){ el('marqueeEnabled').value = d.marqueeEnabled ? '1':'0'; } if(d.marqueeIntervalMs!==undefined){ el('marqueeInterval').value = d.marqueeIntervalMs; } if(d.marqueeGap!==undefined){ el('marqueeGap').value = d.marqueeGap; } if(d.marqueeMode!==undefined){ el('marqueeMode').value = d.marqueeMode; } if(d.marqueeReturnIntervalMs!==undefined){ el('marqueeReturnInterval').value = d.marqueeReturnIntervalMs; } if(d.marqueeBouncePauseLeftMs!==undefined){ el('marqueeBouncePauseLeft').value = d.marqueeBouncePauseLeftMs; } if(d.marqueeBouncePauseRightMs!==undefined){ el('marqueeBouncePauseRight').value = d.marqueeBouncePauseRightMs; } if(d.marqueeOneShotDelayMs!==undefined){ el('marqueeOneShotDelay').value = d.marqueeOneShotDelayMs; } if(d.marqueeOneShotStopCenter!==undefined){ el('marqueeOneShotStopCenter').value = d.marqueeOneShotStopCenter? '1':'0'; } if(d.marqueeOneShotRestartSec!==undefined){ el('marqueeOneShotRestart').value = d.marqueeOneShotRestartSec; } if(d.marqueeAccelEnabled!==undefined){ el('marqueeAccelEnabled').value = d.marqueeAccelEnabled? '1':'0'; } if(d.marqueeAccelStartIntervalMs!==undefined){ el('marqueeAccelStart').value = d.marqueeAccelStartIntervalMs; } if(d.marqueeAccelEndIntervalMs!==undefined){ el('marqueeAccelEnd').value = d.marqueeAccelEndIntervalMs; } if(d.marqueeAccelDurationMs!==undefined){ el('marqueeAccelDuration').value = d.marqueeAccelDurationMs; } if(d.brightness!==undefined){ if(parseInt(d.brightness,10)===-1){ el('brightnessMode').value='auto'; el('brightnessHidden').value='-1'; } else { el('brightnessMode').value='manual'; el('brightness').value=d.brightness; el('brightnessHidden').value=d.brightness; } } if(d.fontStyle!==undefined){ el('fontStyle').value = d.fontStyle; } const color=rgbToHex(d.colorR,d.colorG,d.colorB); el('colorPicker').value=color; updateColor(color); syncFieldsToPreview(); setSaving(false,'PRÊT'); showToast('Paramètres chargés'); }).catch(()=>{ showToast('Échec chargement paramètres',false); setSaving(false,'HORS LIGNE'); syncFieldsToPreview(); });
 });
 </script>
 </body></html>
@@ -697,6 +737,32 @@ window.addEventListener('load',()=>{
   // Ancien script legacy supprimé (désormais encapsulé dans MAIN_page)
 // Note: La fonction display_update_enable() a été intégrée dans setup()
 // pour une meilleure gestion avec FreeRTOS
+
+// Prototypes des fonctions de calcul de countdown
+void updateCountdown(int &days, int &hours, int &minutes, int &seconds);
+void updateDisplayFormat(int days, int hours, int minutes, int seconds);
+
+// === Fonctions helper pour opérations critiques avec mutex ===
+inline bool safeTakeCountdownData(int &days, int &hours, int &minutes, int &seconds, bool &expired) {
+  MUTEX_GUARD(countdownMutex, MUTEX_TIMEOUT_FAST);
+  if (guard_countdownMutex.isLocked()) {
+    updateCountdown(days, hours, minutes, seconds);
+    updateDisplayFormat(days, hours, minutes, seconds);
+    expired = countdownExpired;
+    return true;
+  }
+  return false;
+}
+
+inline bool safeUpdateCountdownTarget(const DateTime &newTarget) {
+  MUTEX_GUARD(countdownMutex, MUTEX_TIMEOUT_NORMAL);
+  if (guard_countdownMutex.isLocked()) {
+    countdownTarget = newTarget;
+    countdownExpired = false; // Reset si nouvelle date
+    return true;
+  }
+  return false;
+}
 
 // Calcul du temps restant
 void updateCountdown(int &days, int &hours, int &minutes, int &seconds) {
@@ -759,24 +825,36 @@ void drawColon(int16_t x, int16_t y, uint16_t colonColor) {
   display.fillRect(x, y+4, 2, 2, colonColor);
 }
 
-// Obtenir la police en fonction de l'index
-const GFXfont* getFontByIndex(int index) {
-  switch (index) {
-    case 1:
-      return &FreeSans9pt7b;
-    case 2:
-      return &FreeSansBold9pt7b;
-    case 3:
-      return &FreeMono9pt7b;
-    case 4:
-      #ifdef HAVE_LATIN1_FONT
-      return &DejaVuSans9ptLat1; // Police générée incluant accents (32-255)
-      #else
-      return &FreeSans9pt7b; // fallback si non fournie
-      #endif
-    default:
-      return NULL; // Police par défaut
+// Sélection de police selon le style choisi (Normal, Gras, Italique)
+const GFXfont* getOptimalFont() {
+  switch (fontStyle) {
+    case 1: return &DejaVuSans_Bold9pt8b;    // Gras
+    case 2: return &DejaVuSans_Oblique9pt8b; // Italique
+    default: return &DejaVuSans9ptLat1;      // Normal (défaut)
   }
+}
+
+// Calcul automatique de la taille optimale selon le texte et la police
+int calculateAutoTextSize(const char* text, const GFXfont* font) {
+  // Taille de base selon la largeur totale disponible - ajustée pour minuteur
+  int baseSize;
+  if (TOTAL_WIDTH >= 128) {
+    baseSize = 2; // Taille réduite pour 4+ panneaux (128+ pixels)
+  } else if (TOTAL_WIDTH >= 96) {
+    baseSize = 1; // Taille réduite pour 3 panneaux (96 pixels) - mieux pour minuteur
+  } else if (TOTAL_WIDTH >= 64) {
+    baseSize = 1; // Taille appropriée pour 2 panneaux (64 pixels)
+  } else {
+    baseSize = 1; // Taille standard pour 1 panneau (32 pixels)
+  }
+  
+  // Adapter selon la longueur du texte (textes longs = taille plus petite)
+  int textLen = strlen(text);
+  if (textLen > 8 && baseSize > 1) {
+    return baseSize - 1; // Réduire la taille pour les textes longs (seuil abaissé)
+  }
+  
+  return baseSize;
 }
 
 // Affichage du compte à rebours en plein écran
@@ -784,8 +862,6 @@ void displayFullscreenCountdown(int days, int hours, int minutes, int seconds) {
   // --- Cache layout ---
   static char lastText[64] = ""; // élargi pour titres jusqu'à 50 chars
   static bool lastExpired = false;
-  static int lastFontIndex = -1;
-  static int lastTextSizeTier = -1;
   static int16_t cachedX = 0, cachedY = 0;
   static uint8_t cachedSetSize = 1;
   static bool cachedIsEndMsg = false;
@@ -818,17 +894,8 @@ void displayFullscreenCountdown(int days, int hours, int minutes, int seconds) {
   // Préparer le texte cible
   char currentText[64];
   if (countdownExpired) {
-    // Si police Latin-1 sélectionnée (index 4), garder accents tels quels
-    if (fontIndex == 4) {
-      // Convertir UTF-8 reçu du navigateur en octets Latin-1 que la police couvre
-      utf8ToLatin1(countdownTitle, currentText, sizeof(currentText));
-    } else {
-      // fallback pliage si police sans accents
-      char folded[64];
-      foldAccents(countdownTitle, folded, sizeof(folded));
-      strncpy(currentText, folded, sizeof(currentText)-1);
-      currentText[sizeof(currentText)-1] = '\0';
-    }
+    // Police DejaVu avec support complet UTF-8 -> Latin-1
+    utf8ToLatin1(countdownTitle, currentText, sizeof(currentText));
   } else {
     switch (displayFormat) {
       case 0:  snprintf(currentText, sizeof(currentText), "%dd %02d:%02d", days, hours, minutes); break;
@@ -838,29 +905,18 @@ void displayFullscreenCountdown(int days, int hours, int minutes, int seconds) {
     }
   }
 
-  bool needRecalc = forceLayout || countdownExpired != lastExpired || (strcmp(currentText, lastText) != 0) || fontIndex != lastFontIndex || countdownTextSize != lastTextSizeTier;
+  bool needRecalc = forceLayout || countdownExpired != lastExpired || (strcmp(currentText, lastText) != 0);
 
   if (needRecalc) {
-    const GFXfont *font = getFontByIndex(fontIndex);
+    // Utiliser uniquement la police DejaVu optimale
+    const GFXfont *font = getOptimalFont();
     display.setFont(font);
-    if (!font) {
-      int maxFittingSize = 1;
-      for (int s = 1; s <= 5; s++) {
-        display.setTextSize(s);
-        int w = getTextWidth(currentText, font);
-        int h = 8 * s;
-        if (w < TOTAL_WIDTH && h < TOTAL_HEIGHT) maxFittingSize = s; else break;
-      }
-      int desiredTier = countdownTextSize;
-      int chosen = maxFittingSize;
-      if (desiredTier == 1) chosen = max(1, maxFittingSize - 2);
-      else if (desiredTier == 2) chosen = max(1, maxFittingSize - 1);
-      display.setTextSize(chosen);
-      cachedSetSize = chosen;
-    } else {
-      display.setTextSize(1);
-      cachedSetSize = 1;
-    }
+    
+    // Calcul automatique de la taille basé sur la résolution du panneau
+    int optimalSize = calculateAutoTextSize(currentText, font);
+    display.setTextSize(optimalSize);
+    cachedSetSize = optimalSize;
+    
     int16_t x1, y1; uint16_t w, h;
     display.getTextBounds(currentText, 0, 0, &x1, &y1, &w, &h);
   cachedTextPixelWidth = w; // conserver largeur
@@ -918,12 +974,10 @@ void displayFullscreenCountdown(int days, int hours, int minutes, int seconds) {
   strncpy(lastText, currentText, sizeof(lastText)-1);
   lastText[sizeof(lastText)-1] = '\0';
     lastExpired = countdownExpired;
-    lastFontIndex = fontIndex;
-    lastTextSizeTier = countdownTextSize;
     cachedIsEndMsg = countdownExpired;
   forceLayout = false;
   } else {
-    const GFXfont *font = getFontByIndex(fontIndex);
+    const GFXfont *font = getOptimalFont();
     display.setFont(font);
     display.setTextSize(cachedSetSize);
   }
@@ -1054,15 +1108,17 @@ void displayFullscreenCountdown(int days, int hours, int minutes, int seconds) {
 
 // Chargement des paramètres depuis la mémoire flash (version thread-safe)
 void loadSettings() {
-  // Utiliser un timeout pour éviter les blocages
-  if (preferencesMutex == NULL || xSemaphoreTake(preferencesMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+  Serial.println("Loading settings from NVS...");
+  
+  // Utilisation de la classe helper pour mutex automatique avec timeout approprié
+  MUTEX_GUARD_CHECK(preferencesMutex, MUTEX_TIMEOUT_SLOW) {
     Serial.println("Failed to acquire preferences mutex - using defaults");
     return;
   }
+  
   // Prendre aussi le mutex countdown pour cohérence des paramètres
-  if (countdownMutex == NULL || xSemaphoreTake(countdownMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+  MUTEX_GUARD_CHECK(countdownMutex, MUTEX_TIMEOUT_NORMAL) {
     Serial.println("Failed to acquire countdown mutex - using defaults");
-    xSemaphoreGive(preferencesMutex);
     return;
   }
   
@@ -1081,12 +1137,11 @@ void loadSettings() {
     countdownMinute = preferences.getInt("cd_Minute", 59);
     countdownSecond = preferences.getInt("cd_Second", 0);
     
-    // Paramètres d'affichage
-    countdownTextSize = preferences.getInt("textSize", 2);
+    // Paramètres d'affichage - style de police et couleur
+    fontStyle = preferences.getInt("fontStyle", 0); // 0=Normal, 1=Gras, 2=Italique
     countdownColorR = preferences.getInt("colorR", 0);
     countdownColorG = preferences.getInt("colorG", 255);
     countdownColorB = preferences.getInt("colorB", 0);
-  fontIndex = preferences.getInt("fontIndex", 0); // accepte maintenant 0-4
   blinkEnabled = preferences.getBool("blinkEn", true);
   blinkIntervalMs = preferences.getInt("blinkInt", 500);
   blinkWindowSeconds = preferences.getInt("blinkWin", 10);
@@ -1114,9 +1169,7 @@ void loadSettings() {
     
   } while(false);
   
-  // Libérer le mutex
-  xSemaphoreGive(preferencesMutex);
-  xSemaphoreGive(countdownMutex);
+  // Les mutex sont libérés automatiquement par le destructeur de MutexGuard
   
   if (success) {
     Serial.println("Settings loaded successfully");
@@ -1145,79 +1198,99 @@ void loadSettings() {
 
 // Sauvegarde des paramètres dans la mémoire flash (version thread-safe)
 void saveSettings() {
-  // Utiliser un timeout pour éviter les blocages
-  if (preferencesMutex == NULL || xSemaphoreTake(preferencesMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
-    Serial.println("Failed to acquire preferences mutex - settings not saved");
-    return;
-  }
-  if (countdownMutex == NULL || xSemaphoreTake(countdownMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
-    Serial.println("Failed to acquire countdown mutex - settings not saved");
-    xSemaphoreGive(preferencesMutex);
+  Serial.println("Saving settings to NVS...");
+  
+  // Tentative simple d'acquisition des mutex avec vérification du scheduler
+  if (xTaskGetSchedulerState() != taskSCHEDULER_RUNNING) {
+    Serial.println("Scheduler not running - delaying save");
     return;
   }
   
-  // Utiliser un try-catch style pour s'assurer que le mutex est libéré
-  bool success = false;
-  do {
-    if (!preferences.begin("countdown", false)) {
+  // Tentative d'acquisition des mutex avec timeout court
+  if (preferencesMutex && xSemaphoreTake(preferencesMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+    
+    bool prefsStarted = preferences.begin("countdown", false);
+    if (prefsStarted) {
+      // Paramètres du countdown - capture des valeurs locales pour éviter les races
+      int year, month, day, hour, minute, second;
+      int colorR, colorG, colorB;
+      int fStyle;
+      
+      // Acquisition rapide du mutex countdown pour capturer les valeurs
+      if (countdownMutex && xSemaphoreTake(countdownMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        year = countdownYear;
+        month = countdownMonth;
+        day = countdownDay;
+        hour = countdownHour;
+        minute = countdownMinute;
+        second = countdownSecond;
+        colorR = countdownColorR;
+        colorG = countdownColorG;
+        colorB = countdownColorB;
+        fStyle = fontStyle;
+        xSemaphoreGive(countdownMutex);
+      } else {
+        // Si on ne peut pas obtenir le mutex, utiliser les valeurs par défaut
+        Serial.println("Could not acquire countdown mutex - using current values");
+        year = countdownYear;
+        month = countdownMonth;
+        day = countdownDay;
+        hour = countdownHour;
+        minute = countdownMinute;
+        second = countdownSecond;
+        colorR = countdownColorR;
+        colorG = countdownColorG;
+        colorB = countdownColorB;
+        fStyle = fontStyle;
+      }
+      
+      // Sauvegarde sans mutex actif
+      preferences.putInt("cd_Year", year);
+      preferences.putInt("cd_Month", month);
+      preferences.putInt("cd_Day", day);
+      preferences.putInt("cd_Hour", hour);
+      preferences.putInt("cd_Minute", minute);
+      preferences.putInt("cd_Second", second);
+      
+      // Paramètres d'affichage - style de police et couleur
+      preferences.putInt("fontStyle", fStyle);
+      preferences.putInt("colorR", colorR);
+      preferences.putInt("colorG", colorG);
+      preferences.putInt("colorB", colorB);
+      preferences.putBool("blinkEn", blinkEnabled);
+      preferences.putInt("blinkInt", blinkIntervalMs);
+      preferences.putInt("blinkWin", blinkWindowSeconds);
+      preferences.putBool("mqEn", marqueeEnabled);
+      preferences.putInt("mqInt", marqueeIntervalMs);
+      preferences.putInt("mqGap", marqueeGap);
+      preferences.putInt("mqMode", marqueeMode);
+      preferences.putInt("mqRetInt", marqueeReturnIntervalMs);
+      preferences.putInt("mqPL", marqueeBouncePauseLeftMs);
+      preferences.putInt("mqPR", marqueeBouncePauseRightMs);
+      preferences.putInt("mqOsDelay", marqueeOneShotDelayMs);
+      preferences.putBool("mqOsStopC", marqueeOneShotStopCenter);
+      preferences.putInt("mqOsRst", marqueeOneShotRestartSec);
+      preferences.putBool("mqAccEn", marqueeAccelEnabled);
+      preferences.putInt("mqAccSt", marqueeAccelStartIntervalMs);
+      preferences.putInt("mqAccEnd", marqueeAccelEndIntervalMs);
+      preferences.putInt("mqAccDur", marqueeAccelDurationMs);
+      preferences.putInt("bright", displayBrightness);
+      
+      preferences.putString("cd_Title", String(countdownTitle));
+      
+      preferences.end();
+      Serial.println("Settings saved successfully");
+      
+      // Mise à jour de la couleur et de la date cible
+      countdownColor = display.color565(colorR, colorG, colorB);
+      countdownTarget = DateTime(year, month, day, hour, minute, second);
+    } else {
       Serial.println("Failed to begin preferences");
-      break;
     }
     
-    // Paramètres du countdown
-    preferences.putInt("cd_Year", countdownYear);
-    preferences.putInt("cd_Month", countdownMonth);
-    preferences.putInt("cd_Day", countdownDay);
-    preferences.putInt("cd_Hour", countdownHour);
-    preferences.putInt("cd_Minute", countdownMinute);
-    preferences.putInt("cd_Second", countdownSecond);
-    
-    // Paramètres d'affichage
-    preferences.putInt("textSize", countdownTextSize);
-    preferences.putInt("colorR", countdownColorR);
-    preferences.putInt("colorG", countdownColorG);
-    preferences.putInt("colorB", countdownColorB);
-    preferences.putInt("fontIndex", fontIndex);
-  preferences.putBool("blinkEn", blinkEnabled);
-  preferences.putInt("blinkInt", blinkIntervalMs);
-  preferences.putInt("blinkWin", blinkWindowSeconds);
-  preferences.putBool("mqEn", marqueeEnabled);
-  preferences.putInt("mqInt", marqueeIntervalMs);
-  preferences.putInt("mqGap", marqueeGap);
-  preferences.putInt("mqMode", marqueeMode);
-  preferences.putInt("mqRetInt", marqueeReturnIntervalMs);
-  preferences.putInt("mqPL", marqueeBouncePauseLeftMs);
-  preferences.putInt("mqPR", marqueeBouncePauseRightMs);
-  preferences.putInt("mqOsDelay", marqueeOneShotDelayMs);
-  preferences.putBool("mqOsStopC", marqueeOneShotStopCenter);
-  preferences.putInt("mqOsRst", marqueeOneShotRestartSec);
-  preferences.putBool("mqAccEn", marqueeAccelEnabled);
-  preferences.putInt("mqAccSt", marqueeAccelStartIntervalMs);
-  preferences.putInt("mqAccEnd", marqueeAccelEndIntervalMs);
-  preferences.putInt("mqAccDur", marqueeAccelDurationMs);
-  preferences.putInt("bright", displayBrightness);
-    
-    preferences.putString("cd_Title", String(countdownTitle));
-    
-    preferences.end();
-    success = true;
-    
-  } while(false);
-  
-  // Libérer le mutex
-  xSemaphoreGive(preferencesMutex);
-  xSemaphoreGive(countdownMutex);
-  
-  if (success) {
-    Serial.println("Settings saved successfully");
-    // Mise à jour de la couleur
-    countdownColor = display.color565(countdownColorR, countdownColorG, countdownColorB);
-    
-    // Mise à jour de la date cible
-    countdownTarget = DateTime(countdownYear, countdownMonth, countdownDay, 
-                             countdownHour, countdownMinute, countdownSecond);
+    xSemaphoreGive(preferencesMutex);
   } else {
-    Serial.println("Failed to save settings");
+    Serial.println("Could not acquire preferences mutex - save skipped");
   }
 }
 
@@ -1282,11 +1355,10 @@ void handleGetSettings() {
   json += "\"hour\":" + String(countdownHour) + ",";
   json += "\"minute\":" + String(countdownMinute) + ",";
   json += "\"second\":" + String(countdownSecond) + ",";
-  json += "\"textSize\":" + String(countdownTextSize) + ",";
+  json += "\"fontStyle\":" + String(fontStyle) + ",";
   json += "\"colorR\":" + String(countdownColorR) + ",";
   json += "\"colorG\":" + String(countdownColorG) + ",";
   json += "\"colorB\":" + String(countdownColorB) + ",";
-  json += "\"fontIndex\":" + String(fontIndex) + ","; // 0-4
   json += "\"blinkEnabled\":" + String(blinkEnabled ? 1 : 0) + ",";
   json += "\"blinkIntervalMs\":" + String(blinkIntervalMs) + ",";
   json += "\"blinkWindow\":" + String(blinkWindowSeconds) + ",";
@@ -1373,12 +1445,11 @@ void handleSettings() {
   countdownMinute = timeStr.substring(3, 5).toInt();
   countdownSecond = timeStr.length() > 5 ? timeStr.substring(6, 8).toInt() : 0;
   
-  // Récupérer les autres paramètres
-  countdownTextSize = server.hasArg("textSize") ? server.arg("textSize").toInt() : countdownTextSize;
+  // Récupérer le style de police et la couleur
+  fontStyle = server.hasArg("fontStyle") ? server.arg("fontStyle").toInt() : fontStyle;
   countdownColorR = server.hasArg("colorR") ? server.arg("colorR").toInt() : countdownColorR;
   countdownColorG = server.hasArg("colorG") ? server.arg("colorG").toInt() : countdownColorG;
   countdownColorB = server.hasArg("colorB") ? server.arg("colorB").toInt() : countdownColorB;
-  fontIndex = server.hasArg("fontIndex") ? server.arg("fontIndex").toInt() : fontIndex;
   if (server.hasArg("blinkEnabled")) {
     blinkEnabled = server.arg("blinkEnabled").toInt() != 0;
   }
@@ -1475,12 +1546,9 @@ void handleSettings() {
     displayBrightness = b;
   }
   
-  // Limiter les valeurs
-  if (countdownTextSize < 1) countdownTextSize = 1;
-  if (countdownTextSize > 3) countdownTextSize = 3;
-  
-  if (fontIndex < 0) fontIndex = 0;
-  if (fontIndex > 4) fontIndex = 4;
+  // Valider le style de police (0=Normal, 1=Gras, 2=Italique)
+  if (fontStyle < 0) fontStyle = 0;
+  if (fontStyle > 2) fontStyle = 2;
   
   // Mettre à jour le titre
     if (title.length() > 0) {
@@ -1529,7 +1597,8 @@ void handleSettings() {
                 countdownYear, countdownMonth, countdownDay,
                 countdownHour, countdownMinute, countdownSecond);
   Serial.printf("Title: %s\n", countdownTitle);
-  Serial.printf("Text Size: %d, Font: %d\n", countdownTextSize, fontIndex);
+  const char* fontStyleNames[] = {"Normal", "Gras", "Italique"};
+  Serial.printf("Font: DejaVu %s (taille automatique)\n", fontStyleNames[fontStyle]);
   Serial.printf("Color (RGB): %d,%d,%d\n", countdownColorR, countdownColorG, countdownColorB);
   Serial.printf("Blink: enabled=%d interval=%dms window=%ds\n", blinkEnabled, blinkIntervalMs, blinkWindowSeconds);
   Serial.printf("Marquee: en=%d mode=%d fwdInt=%d retInt=%d gap=%d LPause=%d RPause=%d accel=%d start=%d end=%d dur=%d oneDelay=%d oneStopC=%d oneRst=%d\n",
@@ -1565,11 +1634,10 @@ void handleReset() {
     countdownMinute = 59;
     countdownSecond = 0;
     strcpy(countdownTitle, "COUNTDOWN");
-    countdownTextSize = 2;
+    fontStyle = 0; // Normal par défaut
     countdownColorR = 0;
     countdownColorG = 255;
     countdownColorB = 0;
-    fontIndex = 0;
     countdownColor = display.color565(countdownColorR, countdownColorG, countdownColorB);
     countdownTarget = DateTime(countdownYear, countdownMonth, countdownDay, 
                                countdownHour, countdownMinute, countdownSecond);
@@ -1787,22 +1855,25 @@ void DisplayTask(void * parameter) {
   int prevSeconds = -1, prevMinutes = -1, prevHours = -1, prevDays = -1;
   bool prevExpired = false;
   for(;;) {
-    if(displayMutex != NULL && xSemaphoreTake(displayMutex, pdMS_TO_TICKS(10))) {
-      int days=0, hours=0, minutes=0, seconds=0;
-      if(countdownMutex != NULL && xSemaphoreTake(countdownMutex, pdMS_TO_TICKS(10))) {
-        updateCountdown(days, hours, minutes, seconds);
-        updateDisplayFormat(days, hours, minutes, seconds);
-        prevExpired = countdownExpired; // snapshot
-        xSemaphoreGive(countdownMutex);
+    // Utiliser MUTEX_GUARD avec timeout optimisé pour l'affichage
+    {
+      MUTEX_GUARD(displayMutex, MUTEX_TIMEOUT_FAST);
+      if (guard_displayMutex.isLocked()) {
+        int days=0, hours=0, minutes=0, seconds=0;
+        bool expired = false;
+        
+        // Utiliser la fonction helper optimisée
+        if (safeTakeCountdownData(days, hours, minutes, seconds, expired)) {
+          bool secondChanged = (seconds != prevSeconds) || (minutes != prevMinutes) || (hours != prevHours) || (days != prevDays);
+          bool needDraw = secondChanged || blinkLastSeconds || expired != prevExpired || marqueeActive;
+          if (needDraw) {
+            displayFullscreenCountdown(days, hours, minutes, seconds);
+            prevSeconds = seconds; prevMinutes = minutes; prevHours = hours; prevDays = days; prevExpired = expired;
+          }
+        }
       }
-      bool secondChanged = (seconds != prevSeconds) || (minutes != prevMinutes) || (hours != prevHours) || (days != prevDays);
-      bool needDraw = secondChanged || blinkLastSeconds || countdownExpired != prevExpired || marqueeActive;
-      if (needDraw) {
-        displayFullscreenCountdown(days, hours, minutes, seconds);
-        prevSeconds = seconds; prevMinutes = minutes; prevHours = hours; prevDays = days; prevExpired = countdownExpired;
-      }
-      xSemaphoreGive(displayMutex);
     }
+    
     // Fréquence un peu plus élevée si marquee actif pour fluidité, sinon économe
     uint32_t baseDelay = marqueeActive ? 40 : 150;
     if (blinkLastSeconds && baseDelay > 50) baseDelay = 50;
@@ -1839,7 +1910,7 @@ void CountdownTask(void * parameter) {
   
   for(;;) {
     // Vérifier s'il faut sauvegarder les paramètres (avec délai de sécurité)
-  if (saveRequested && (millis() - saveRequestTime) > 1500) {  // Débounce 1.5s après dernière modif
+    if (saveRequested && (millis() - saveRequestTime) > 1500) {  // Débounce 1.5s après dernière modif
       saveRequested = false;
       // Attendre un peu plus pour s'assurer que le contexte web est terminé
       vTaskDelay(pdMS_TO_TICKS(50));
@@ -1847,16 +1918,19 @@ void CountdownTask(void * parameter) {
       Serial.println("Settings saved from CountdownTask");
     }
     
-    if(countdownMutex != NULL && xSemaphoreTake(countdownMutex, pdMS_TO_TICKS(100))) {
-      DateTime now = rtc.now();
-      if (now.isValid()) {  // Vérification de la validité de la date/heure
-        if (now >= countdownTarget) {
-          countdownExpired = true;
+    // Utiliser MUTEX_GUARD avec timeout optimisé
+    {
+      MUTEX_GUARD(countdownMutex, MUTEX_TIMEOUT_NORMAL);
+      if (guard_countdownMutex.isLocked()) {
+        DateTime now = rtc.now();
+        if (now.isValid()) {  // Vérification de la validité de la date/heure
+          if (now >= countdownTarget) {
+            countdownExpired = true;
+          }
+        } else {
+          Serial.println("RTC read error!");
         }
-      } else {
-        Serial.println("RTC read error!");
       }
-      xSemaphoreGive(countdownMutex);
     }
     vTaskDelay(pdMS_TO_TICKS(100));
   }
