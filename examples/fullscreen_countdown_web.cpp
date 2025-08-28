@@ -1569,7 +1569,7 @@ void displayFullscreenCountdown(int days, int hours, int minutes, int seconds) {
     utf8ToLatin1(countdownTitle, currentText, sizeof(currentText));
   } else {
     switch (displayFormat) {
-      case 0:  snprintf(currentText, sizeof(currentText), "%dd %02d:%02d", days, hours, minutes); break;
+      case 0:  snprintf(currentText, sizeof(currentText), "%dD %02d:%02d", days, hours, minutes); break;
       case 1:  snprintf(currentText, sizeof(currentText), "%02d:%02d:%02d", hours, minutes, seconds); break;
       case 2:  snprintf(currentText, sizeof(currentText), "%02d:%02d", minutes, seconds); break;
       default: snprintf(currentText, sizeof(currentText), "%02d", seconds); break;
